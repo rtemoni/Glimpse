@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Glimpse</string>
+    <key>CFBundleExecutable</key>
+    <string>Glimpse</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.example.Glimpse</string>
+    <key>CFBundleName</key>
+    <string>Glimpse</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Glimpse uses the camera to place your webcam in the recording.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Glimpse uses the microphone to capture narration for the recording.</string>
+    <key>NSScreenCaptureDescription</key>
+    <string>Glimpse records the selected screen for user-initiated captures.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Glimpse captures system audio only when enabled by the user.</string>
+</dict>
+</plist>
