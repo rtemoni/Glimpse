@@ -5,6 +5,7 @@ import AppKit
 @main
 struct GlimpseApp: App {
     @StateObject private var coordinator = RecordingCoordinator()
+    @StateObject private var statusItemController = RecordingStatusItemController()
 
     init() {
         if let image = Self.appIconImage() {
@@ -16,6 +17,9 @@ struct GlimpseApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(coordinator)
+                .onAppear {
+                    statusItemController.attach(to: coordinator)
+                }
                 .frame(minWidth: 380, minHeight: 220)
         }
         .defaultSize(width: 400, height: 240)

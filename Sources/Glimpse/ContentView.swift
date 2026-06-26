@@ -8,20 +8,24 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
-    @State private var prefersExpandedWorkspace = false
+    @State private var selectedSplashTab: SplashTab = .preview
+    @State private var hasStartedPermissionOnboarding = false
 
     var body: some View {
         Group {
             if let summary = coordinator.recordingSummary, coordinator.editingSession != nil {
                 EditorWorkspace(summary: summary)
                     .environmentObject(coordinator)
+            } else if coordinator.shouldShowOnboarding && !hasStartedPermissionOnboarding {
+                GetStartedView {
+                    hasStartedPermissionOnboarding = true
+                    coordinator.startPermissionMonitoring()
+                }
             } else if coordinator.shouldShowOnboarding {
                 PermissionOnboardingView()
                     .environmentObject(coordinator)
-            } else if coordinator.shouldShowCompactIdle && !prefersExpandedWorkspace {
-                CompactIdleView {
-                    prefersExpandedWorkspace = true
-                }
+            } else if coordinator.state == .idle {
+                CompactIdleView(selectedTab: $selectedSplashTab)
                 .environmentObject(coordinator)
             } else {
                 RecorderWorkspace()
@@ -29,7 +33,18 @@ struct ContentView: View {
             }
         }
         .background(WindowSizingController(mode: windowPresentationMode))
+        .background(
+            RecordingWindowLifecycleController(
+                recordingPresentationToken: coordinator.recordingPresentationToken,
+                shouldRestoreAfterRecording: coordinator.recordingSummary != nil
+            )
+        )
         .onAppear {
+            coordinator.refreshDevices()
+            coordinator.startPermissionMonitoring()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            coordinator.refreshPermissionStatuses()
             coordinator.refreshDevices()
             coordinator.startPermissionMonitoring()
         }
@@ -50,13 +65,32 @@ struct ContentView: View {
         if coordinator.recordingSummary != nil {
             return .editor
         }
+        if coordinator.shouldShowOnboarding && !hasStartedPermissionOnboarding {
+            return .getStarted
+        }
         if coordinator.shouldShowOnboarding {
             return .onboarding
         }
-        if coordinator.shouldShowCompactIdle && !prefersExpandedWorkspace {
-            return .compactIdle
+        if coordinator.state == .idle {
+            return .splash
         }
         return .workspace
+    }
+}
+
+private enum SplashTab: String, CaseIterable, Identifiable {
+    case preview
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .preview:
+            return "Screen"
+        case .settings:
+            return "Settings"
+        }
     }
 }
 
@@ -69,7 +103,7 @@ private struct RecorderWorkspace: View {
 
             HSplitView {
                 VStack(spacing: 12) {
-                    PreviewPane()
+                    RecordingStatusPane()
                         .environmentObject(coordinator)
                         .padding(10)
                         .liquidGlassSurface(cornerRadius: 24)
@@ -2728,6 +2762,9 @@ private struct CaptureTargetPickerSheet: View {
 
 private struct CaptureTargetCard: View {
     let target: ScreenCaptureTarget
+    var actionTitle = "Record"
+    var actionSystemImage = "record.circle"
+    var isSelected = false
     @State private var previewImage: NSImage?
 
     var body: some View {
@@ -2777,9 +2814,9 @@ private struct CaptureTargetCard: View {
 
             HStack {
                 Spacer()
-                Label("Record", systemImage: "record.circle")
+                Label(actionTitle, systemImage: actionSystemImage)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.red)
             }
         }
         .padding(10)
@@ -2787,7 +2824,7 @@ private struct CaptureTargetCard: View {
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.75) : Color.white.opacity(0.10), lineWidth: isSelected ? 2 : 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .clipped()
@@ -2799,82 +2836,363 @@ private struct CaptureTargetCard: View {
 
 private struct CompactIdleView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
-    let showSettings: () -> Void
+    @Binding var selectedTab: SplashTab
 
     var body: some View {
         ZStack {
             LiquidGlassBackdrop()
 
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) {
-                    Image(systemName: "record.circle")
-                        .font(.system(size: 34, weight: .regular))
-                        .foregroundStyle(Color.red)
-                        .frame(width: 44, height: 44)
+            ScrollView {
+                splashCard
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .scrollIndicators(.automatic)
+        }
+        .frame(minWidth: 640, minHeight: 560)
+        .onAppear {
+            if selectedTab == .preview {
+                Task {
+                    await coordinator.startSetupPreview()
+                }
+            }
+        }
+        .onChange(of: selectedTab) { tab in
+            Task {
+                if tab == .preview {
+                    await coordinator.startSetupPreview()
+                } else {
+                    await coordinator.stopSetupPreview()
+                }
+            }
+        }
+        .onChange(of: coordinator.settings.overlay.isEnabled) { _ in
+            Task {
+                await coordinator.restartSetupPreviewIfNeeded()
+            }
+        }
+        .onChange(of: coordinator.settings.selectedCameraID) { _ in
+            Task {
+                await coordinator.restartSetupPreviewIfNeeded()
+            }
+        }
+        .onDisappear {
+            Task {
+                await coordinator.stopSetupPreview()
+            }
+        }
+    }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Glimpse")
-                            .font(.title3.weight(.semibold))
-                        Text("Ready to record")
+    private var splashCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 34, weight: .regular))
+                    .foregroundStyle(Color.red)
+                    .frame(width: 44, height: 44)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Glimpse")
+                        .font(.title3.weight(.semibold))
+                    Text("Ready to record")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                StatusPill(text: coordinator.state.displayName, systemImage: "circle")
+            }
+
+            LiquidGlassCluster {
+                HStack(spacing: 8) {
+                    LaunchSourceToggle(
+                        title: "Camera",
+                        systemImage: "video",
+                        isOn: $coordinator.settings.overlay.isEnabled
+                    )
+                    LaunchSourceToggle(
+                        title: "Mic",
+                        systemImage: "mic",
+                        isOn: $coordinator.settings.microphoneEnabled
+                    )
+                    LaunchSourceToggle(
+                        title: "System",
+                        systemImage: "speaker.wave.2",
+                        isOn: $coordinator.settings.systemAudioEnabled
+                    )
+                    .disabled(!coordinator.isSystemAudioAvailable)
+                }
+            }
+
+            if coordinator.settings.overlay.isEnabled {
+                CompactOverlayMenus()
+                    .environmentObject(coordinator)
+            }
+
+            Picker("Setup View", selection: $selectedTab) {
+                ForEach(SplashTab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Setup View")
+
+            Group {
+                switch selectedTab {
+                case .preview:
+                    SplashPreviewPanel()
+                        .environmentObject(coordinator)
+                case .settings:
+                    SplashSettingsPanel()
+                        .environmentObject(coordinator)
+                }
+            }
+            .frame(minHeight: 300, alignment: .top)
+
+            Button {
+                Task {
+                    await coordinator.startRecording()
+                }
+            } label: {
+                Label("Start Recording", systemImage: "record.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .liquidGlassSurface(cornerRadius: 16, tint: .red.opacity(0.22), interactive: true)
+            .disabled(!coordinator.canStart)
+            .keyboardShortcut("r", modifiers: [.command])
+        }
+        .padding(18)
+        .frame(
+            minWidth: 600,
+            idealWidth: 760,
+            maxWidth: 820,
+            alignment: .topLeading
+        )
+        .liquidGlassSurface(cornerRadius: 26)
+    }
+}
+
+private struct SplashPreviewPanel: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SplashCaptureTargetSelector()
+                .environmentObject(coordinator)
+
+            PreviewPane()
+                .environmentObject(coordinator)
+                .frame(height: 230)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            if let status = coordinator.statusMessage {
+                Label(status, systemImage: coordinator.isSetupPreviewStarting ? "hourglass" : "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .task {
+            await coordinator.refreshCaptureTargets()
+            await coordinator.restartSetupPreviewIfNeeded()
+        }
+    }
+}
+
+private struct SplashCaptureTargetSelector: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("Screen Recording", systemImage: "display")
+                    .font(.headline)
+
+                Spacer()
+
+                Button {
+                    Task {
+                        await coordinator.refreshCaptureTargets()
+                        await coordinator.restartSetupPreviewIfNeeded()
+                    }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(coordinator.isLoadingCaptureTargets)
+            }
+
+            Group {
+                if coordinator.isLoadingCaptureTargets {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading displays and windows")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
-
-                    Spacer()
-
-                    StatusPill(text: coordinator.state.displayName, systemImage: "circle")
-                }
-
-                LiquidGlassCluster {
-                    HStack(spacing: 8) {
-                        LaunchSourceToggle(
-                            title: "Camera",
-                            systemImage: "video",
-                            isOn: $coordinator.settings.overlay.isEnabled
-                        )
-                        LaunchSourceToggle(
-                            title: "Mic",
-                            systemImage: "mic",
-                            isOn: $coordinator.settings.microphoneEnabled
-                        )
-                        LaunchSourceToggle(
-                            title: "System",
-                            systemImage: "speaker.wave.2",
-                            isOn: $coordinator.settings.systemAudioEnabled
-                        )
-                        .disabled(!coordinator.isSystemAudioAvailable)
+                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+                } else if coordinator.captureTargets.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "display.slash")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("No displays or windows available")
+                            .font(.callout.weight(.medium))
+                        Text("Enable Screen Recording permission, then refresh.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                }
+                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+                    .liquidGlassSurface(cornerRadius: 16)
+                } else {
+                    ScrollView(.horizontal) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(coordinator.captureTargets) { target in
+                                let isSelected = target.id == coordinator.selectedCaptureTarget?.id
 
-                if coordinator.settings.overlay.isEnabled {
-                    CompactOverlayMenus()
-                        .environmentObject(coordinator)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        coordinator.openCaptureTargetPicker()
-                    } label: {
-                        Label("Choose & Start", systemImage: "record.circle")
-                            .frame(maxWidth: .infinity)
+                                Button {
+                                    Task {
+                                        await coordinator.selectCaptureTarget(target)
+                                    }
+                                } label: {
+                                    CaptureTargetCard(
+                                        target: target,
+                                        actionTitle: isSelected ? "Selected" : "Select",
+                                        actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
+                                        isSelected: isSelected
+                                    )
+                                    .frame(width: 238)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 2)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .liquidGlassSurface(cornerRadius: 16, tint: .red.opacity(0.22), interactive: true)
-                    .disabled(!coordinator.canStart)
-                    .keyboardShortcut("r", modifiers: [.command])
-
-                    Button(action: showSettings) {
-                        Label("Settings", systemImage: "slider.horizontal.3")
-                    }
-                    .liquidGlassSurface(cornerRadius: 16, interactive: true)
+                    .frame(height: 210)
                 }
             }
-            .padding(18)
-            .frame(width: 390)
-            .liquidGlassSurface(cornerRadius: 26)
-            .padding(12)
         }
-        .frame(minWidth: 420, minHeight: 288)
+    }
+}
+
+private struct SplashSettingsPanel: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 18) {
+                    primarySettingsColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    secondarySettingsColumn
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+
+                VStack(alignment: .leading, spacing: 16) {
+                    primarySettingsColumn
+                    secondarySettingsColumn
+                }
+            }
+        }
+    }
+
+    private var primarySettingsColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            OutputSettings()
+                .environmentObject(coordinator)
+            VideoSettings()
+                .environmentObject(coordinator)
+        }
+    }
+
+    private var secondarySettingsColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            AudioSettings()
+                .environmentObject(coordinator)
+            OverlaySettingsView()
+                .environmentObject(coordinator)
+        }
+    }
+}
+
+private struct GetStartedView: View {
+    private static let repositoryURL = URL(string: "https://github.com/rtemoni/glimpse")!
+    let start: () -> Void
+
+    var body: some View {
+        ZStack {
+            LiquidGlassBackdrop()
+
+            VStack(spacing: 20) {
+                HStack(alignment: .top, spacing: 18) {
+                    GlimpseStartIconView()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Glimpse")
+                            .font(.system(size: 46, weight: .semibold, design: .rounded))
+
+                        Link("github.com/rtemoni/glimpse", destination: Self.repositoryURL)
+                            .font(.callout.weight(.medium))
+
+                        Text("an open source native macos screen/camera recorder and clip editor")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("by rtemoni")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: 600, alignment: .center)
+
+                Button(action: start) {
+                    Label("Start", systemImage: "arrow.right.circle.fill")
+                        .frame(width: 136)
+                }
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
+                .liquidGlassSurface(cornerRadius: 14, tint: .accentColor.opacity(0.16), interactive: true)
+            }
+            .padding(36)
+            .frame(maxWidth: 640)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct GlimpseStartIconView: View {
+    var body: some View {
+        Group {
+            if let image = Self.packageImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: "record.circle.fill")
+                    .resizable()
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.red, .secondary)
+                    .scaledToFit()
+            }
+        }
+        .frame(width: 108, height: 108)
+        .offset(y: -4)
+        .accessibilityHidden(true)
+    }
+
+    private static var packageImage: NSImage? {
+        guard let url = Bundle.module.url(forResource: "GlimpseStartIcon", withExtension: "png") else {
+            return nil
+        }
+
+        return NSImage(contentsOf: url)
     }
 }
 
@@ -2886,7 +3204,7 @@ private struct PermissionOnboardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Set Up Permissions", systemImage: "checklist")
                     .font(.system(size: 28, weight: .semibold))
-                Text("Use the checklist to open the macOS privacy settings this recorder needs. When you have reviewed the items, continue to the app.")
+                Text("Grant the required macOS permissions before setting up a recording. Glimpse checks the current permission state each time this window appears and whenever you return from System Settings.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2924,20 +3242,18 @@ private struct PermissionOnboardingView: View {
                 )
                 .font(.callout)
                 .foregroundStyle(.secondary)
-
-                Button {
-                    coordinator.completePermissionOnboarding()
-                } label: {
-                    Label("Continue to Recorder", systemImage: "arrow.right.circle")
-                }
-                .buttonStyle(.borderedProminent)
-                .liquidGlassSurface(cornerRadius: 14, tint: .accentColor.opacity(0.2), interactive: true)
             }
         }
         .padding(34)
         .frame(maxWidth: 820, maxHeight: .infinity, alignment: .center)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(LiquidGlassBackdrop())
+        .onAppear {
+            coordinator.startPermissionMonitoring()
+        }
+        .onDisappear {
+            coordinator.stopPermissionMonitoring()
+        }
     }
 }
 
@@ -3027,6 +3343,95 @@ private struct PermissionChecklistRow: View {
         case .waitingForScreenRecording:
             return .secondary
         case .unavailable:
+            return .secondary
+        }
+    }
+}
+
+private struct RecordingStatusPane: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: statusImage)
+                .font(.system(size: 54, weight: .regular))
+                .foregroundStyle(statusColor)
+                .frame(width: 72, height: 72)
+
+            Text(coordinator.elapsedTimeLabel)
+                .font(.system(size: 34, weight: .semibold, design: .monospaced).monospacedDigit())
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            HStack(spacing: 8) {
+                StatusPill(text: coordinator.state.displayName, systemImage: statePillImage)
+                if coordinator.settings.systemAudioEnabled {
+                    StatusPill(text: "System", systemImage: "speaker.wave.2")
+                }
+                if coordinator.settings.microphoneEnabled {
+                    StatusPill(text: "Mic", systemImage: "mic")
+                }
+                if coordinator.settings.overlay.isEnabled {
+                    StatusPill(text: "Camera", systemImage: "video")
+                }
+            }
+
+            if let status = coordinator.statusMessage {
+                Text(status)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.black.opacity(0.08))
+        }
+    }
+
+    private var statusImage: String {
+        switch coordinator.state {
+        case .recording:
+            return "record.circle.fill"
+        case .paused:
+            return "pause.circle.fill"
+        case .preparing, .ready:
+            return "hourglass.circle"
+        case .stopping:
+            return "stop.circle"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        case .idle:
+            return "circle"
+        }
+    }
+
+    private var statePillImage: String {
+        switch coordinator.state {
+        case .recording:
+            return "record.circle"
+        case .paused:
+            return "pause.circle"
+        case .error:
+            return "exclamationmark.triangle"
+        default:
+            return "circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch coordinator.state {
+        case .recording:
+            return .red
+        case .paused:
+            return .orange
+        case .error:
+            return .red
+        default:
             return .secondary
         }
     }
@@ -3737,15 +4142,18 @@ private func formatFileSize(_ bytes: Int64) -> String {
 }
 
 private enum WindowPresentationMode: Equatable {
-    case compactIdle
+    case getStarted
+    case splash
     case editor
     case onboarding
     case workspace
 
     var minimumSize: NSSize {
         switch self {
-        case .compactIdle:
-            return NSSize(width: 420, height: 288)
+        case .getStarted:
+            return NSSize(width: 540, height: 480)
+        case .splash:
+            return NSSize(width: 640, height: 560)
         case .editor:
             return NSSize(width: 880, height: 620)
         case .onboarding:
@@ -3757,8 +4165,10 @@ private enum WindowPresentationMode: Equatable {
 
     var preferredSize: NSSize {
         switch self {
-        case .compactIdle:
-            return NSSize(width: 440, height: 320)
+        case .getStarted:
+            return NSSize(width: 640, height: 540)
+        case .splash:
+            return NSSize(width: 820, height: 680)
         case .editor:
             return NSSize(width: 1120, height: 720)
         case .onboarding:

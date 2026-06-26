@@ -17,8 +17,10 @@ final class RecordingCoordinator: ObservableObject {
     @Published var microphoneLevel: Double = 0
     @Published private(set) var elapsedSeconds: Int = 0
     @Published var isSystemAudioAvailable = true
+    @Published private(set) var isSetupPreviewActive = false
+    @Published private(set) var isSetupPreviewStarting = false
+    @Published private(set) var recordingPresentationToken: UUID?
     @Published private(set) var permissionChecklist: [PermissionChecklistItem] = []
-    @Published private(set) var hasCompletedPermissionOnboarding = false
     @Published var recordingSummary: RecordingSummary?
     @Published var editingSession: EditingSession?
     @Published var exportSettings = ExportSettings()
@@ -28,8 +30,8 @@ final class RecordingCoordinator: ObservableObject {
     @Published var isCaptureTargetPickerPresented = false
     @Published private(set) var captureTargets: [ScreenCaptureTarget] = []
     @Published private(set) var isLoadingCaptureTargets = false
+    @Published private(set) var selectedCaptureTarget: ScreenCaptureTarget?
 
-    private static let permissionOnboardingCompletionKey = "Glimpse.permissionOnboardingCompleted"
     private var stateMachine = RecordingStateMachine()
     private let screenCapture = ScreenCaptureService()
     private let cameraCapture = CameraCaptureService()
@@ -46,7 +48,6 @@ final class RecordingCoordinator: ObservableObject {
 
     init() {
         isSystemAudioAvailable = AudioCaptureService.isSystemAudioCaptureSupported
-        hasCompletedPermissionOnboarding = UserDefaults.standard.bool(forKey: Self.permissionOnboardingCompletionKey)
         refreshPermissionStatuses()
         wireCaptureCallbacks()
     }
@@ -81,16 +82,12 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     var isOnboardingComplete: Bool {
-        if hasCompletedPermissionOnboarding {
-            return true
-        }
-
         let requiredItems = permissionChecklist.filter(\.isRequired)
         return !requiredItems.isEmpty && requiredItems.allSatisfy(\.isSatisfied)
     }
 
     var shouldShowOnboarding: Bool {
-        !isOnboardingComplete && state == .error
+        !isOnboardingComplete && (state == .idle || state == .error)
     }
 
     var shouldShowCompactIdle: Bool {
@@ -137,13 +134,14 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     func startPermissionMonitoring() {
-        guard !hasCompletedPermissionOnboarding else {
+        refreshPermissionStatuses()
+
+        guard !isOnboardingComplete else {
             permissionTimer?.invalidate()
             permissionTimer = nil
             return
         }
 
-        refreshPermissionStatuses()
         permissionTimer?.invalidate()
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -153,12 +151,9 @@ final class RecordingCoordinator: ObservableObject {
         permissionTimer?.tolerance = 0.25
     }
 
-    func completePermissionOnboarding() {
-        hasCompletedPermissionOnboarding = true
-        UserDefaults.standard.set(true, forKey: Self.permissionOnboardingCompletionKey)
+    func stopPermissionMonitoring() {
         permissionTimer?.invalidate()
         permissionTimer = nil
-        statusMessage = nil
     }
 
     func refreshPermissionStatuses() {
@@ -172,12 +167,12 @@ final class RecordingCoordinator: ObservableObject {
             PermissionChecklistItem(
                 requirement: .camera,
                 state: permissionState(for: AVCaptureDevice.authorizationStatus(for: .video)),
-                isRequired: settings.overlay.isEnabled
+                isRequired: true
             ),
             PermissionChecklistItem(
                 requirement: .microphone,
                 state: permissionState(for: AVCaptureDevice.authorizationStatus(for: .audio)),
-                isRequired: settings.microphoneEnabled
+                isRequired: true
             ),
             PermissionChecklistItem(
                 requirement: .systemAudio,
@@ -211,7 +206,89 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     func startRecording() async {
-        await startRecording(target: nil)
+        await startRecording(target: selectedCaptureTarget)
+    }
+
+    func startSetupPreview() async {
+        guard state == .idle, !isSetupPreviewActive, !isSetupPreviewStarting else {
+            return
+        }
+
+        guard CGPreflightScreenCaptureAccess() else {
+            previewImage = nil
+            statusMessage = "Enable Screen Recording to preview setup"
+            refreshPermissionStatuses()
+            return
+        }
+
+        isSetupPreviewStarting = true
+        var previewStatus = "Previewing setup"
+
+        do {
+            if selectedCaptureTarget == nil {
+                await refreshCaptureTargets()
+            }
+
+            _ = try await screenCapture.prepare(target: selectedCaptureTarget)
+
+            var includeCamera = false
+            if settings.overlay.isEnabled {
+                if await isCameraReadyForSetupPreview() {
+                    do {
+                        try cameraCapture.prepare(deviceID: settings.selectedCameraID)
+                        includeCamera = true
+                    } catch {
+                        previewStatus = "Previewing screen only; camera unavailable"
+                    }
+                } else {
+                    previewStatus = "Previewing screen only; camera permission needed"
+                }
+            }
+
+            try await screenCapture.start()
+            if includeCamera {
+                cameraCapture.start()
+            }
+
+            isSetupPreviewActive = true
+            statusMessage = previewStatus
+        } catch {
+            await stopSetupPreview()
+            errorMessage = readableError(error)
+        }
+
+        isSetupPreviewStarting = false
+    }
+
+    func stopSetupPreview() async {
+        guard isSetupPreviewActive || isSetupPreviewStarting else {
+            return
+        }
+
+        await screenCapture.stop()
+        cameraCapture.stop()
+        isSetupPreviewActive = false
+        isSetupPreviewStarting = false
+        previewImage = nil
+
+        if statusMessage?.hasPrefix("Previewing") == true
+            || statusMessage == "Enable Screen Recording to preview setup" {
+            statusMessage = nil
+        }
+    }
+
+    func restartSetupPreviewIfNeeded() async {
+        guard isSetupPreviewActive || isSetupPreviewStarting else {
+            return
+        }
+
+        await stopSetupPreview()
+        await startSetupPreview()
+    }
+
+    func selectCaptureTarget(_ target: ScreenCaptureTarget) async {
+        selectedCaptureTarget = target
+        await restartSetupPreviewIfNeeded()
     }
 
     func openCaptureTargetPicker() {
@@ -240,10 +317,13 @@ final class RecordingCoordinator: ObservableObject {
     func refreshCaptureTargets() async {
         isLoadingCaptureTargets = true
         do {
-            captureTargets = try await ScreenCaptureService.availableTargets()
+            let targets = try await ScreenCaptureService.availableTargets()
+            captureTargets = targets
+            reconcileSelectedCaptureTarget(with: targets)
         } catch {
             errorMessage = readableError(error)
             captureTargets = []
+            selectedCaptureTarget = nil
         }
         isLoadingCaptureTargets = false
     }
@@ -259,6 +339,7 @@ final class RecordingCoordinator: ObservableObject {
             return
         }
 
+        await stopSetupPreview()
         resetForNewRecording()
         do {
             try transition { try $0.startPreparing() }
@@ -312,6 +393,7 @@ final class RecordingCoordinator: ObservableObject {
             lastOutputURL = outputURL
             try transition { try $0.markReady() }
             try transition { try $0.startRecording() }
+            recordingPresentationToken = UUID()
             recordingStartedAt = Date()
             startElapsedTimer()
             statusMessage = "Recording"
@@ -320,6 +402,7 @@ final class RecordingCoordinator: ObservableObject {
             muxer.cancel()
             stateMachine.fail()
             state = stateMachine.state
+            recordingPresentationToken = nil
             errorMessage = readableError(error)
             statusMessage = nil
         }
@@ -345,6 +428,7 @@ final class RecordingCoordinator: ObservableObject {
         do {
             try await muxer.finish()
             try transition { try $0.finishStopped() }
+            recordingPresentationToken = nil
             if let lastOutputURL {
                 let summary = makeRecordingSummary(for: lastOutputURL, sources: activeSourceSet)
                 recordingSummary = summary
@@ -358,6 +442,7 @@ final class RecordingCoordinator: ObservableObject {
             muxer.cancel()
             stateMachine.fail()
             state = stateMachine.state
+            recordingPresentationToken = nil
             errorMessage = readableError(error)
             statusMessage = nil
         }
@@ -493,13 +578,28 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     private func handleScreenFrame(_ frame: CapturedVideoFrame) {
-        guard state == .recording else {
+        guard state == .recording || isSetupPreviewActive || isSetupPreviewStarting else {
             return
         }
 
         let pixelBuffer = compositor.compose(screenFrame: frame, settings: settings.overlay) ?? frame.pixelBuffer
-        muxer.appendVideoPixelBuffer(pixelBuffer, at: frame.timestamp)
+        if state == .recording {
+            muxer.appendVideoPixelBuffer(pixelBuffer, at: frame.timestamp)
+        }
         previewImage = compositor.makePreviewImage(from: pixelBuffer)
+    }
+
+    private func isCameraReadyForSetupPreview() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await requestAccess(for: .video)
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
     }
 
     private func verifyPermissions(includeCamera: Bool, includeMicrophone: Bool) async throws {
@@ -645,6 +745,7 @@ final class RecordingCoordinator: ObservableObject {
         microphoneLevel = 0
         elapsedSeconds = 0
         lastOutputURL = nil
+        recordingPresentationToken = nil
         recordingSummary = nil
         editingSession = nil
         exportedVideos = []
@@ -652,6 +753,20 @@ final class RecordingCoordinator: ObservableObject {
         if state != .idle {
             stateMachine.reset()
             state = stateMachine.state
+        }
+    }
+
+    private func reconcileSelectedCaptureTarget(with targets: [ScreenCaptureTarget]) {
+        guard !targets.isEmpty else {
+            selectedCaptureTarget = nil
+            return
+        }
+
+        if let selectedCaptureTarget,
+           let refreshedTarget = targets.first(where: { $0.id == selectedCaptureTarget.id }) {
+            self.selectedCaptureTarget = refreshedTarget
+        } else {
+            selectedCaptureTarget = targets.first
         }
     }
 
