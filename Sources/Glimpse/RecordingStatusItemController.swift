@@ -43,9 +43,20 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         }
 
         let statusItem = ensureStatusItem()
-        statusItem.button?.image = statusImage(for: coordinator)
-        statusItem.button?.contentTintColor = coordinator.state == .recording ? .systemRed : nil
-        statusItem.button?.toolTip = statusTitle(for: coordinator)
+        if let button = statusItem.button {
+            button.image = statusImage(for: coordinator)
+            button.imagePosition = .imageLeading
+            button.contentTintColor = .systemRed
+            button.attributedTitle = NSAttributedString(
+                string: coordinator.menuBarElapsedTimeLabel,
+                attributes: [
+                    .foregroundColor: NSColor.systemRed,
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+                ]
+            )
+            button.toolTip = statusTitle(for: coordinator)
+            button.setAccessibilityLabel(statusTitle(for: coordinator))
+        }
         statusItem.menu = makeMenu(for: coordinator)
     }
 
@@ -146,6 +157,12 @@ private extension RecordingCoordinator {
         default:
             return "record.circle.fill"
         }
+    }
+
+    var menuBarElapsedTimeLabel: String {
+        let minutes = elapsedSeconds / 60
+        let seconds = elapsedSeconds % 60
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 }
 #endif

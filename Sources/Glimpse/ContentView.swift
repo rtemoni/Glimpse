@@ -110,7 +110,7 @@ private struct RecorderWorkspace: View {
         ZStack {
             LiquidGlassBackdrop()
 
-            HSplitView {
+            if showsActiveRecordingControls {
                 VStack(spacing: 12) {
                     RecordingStatusPane()
                         .environmentObject(coordinator)
@@ -119,18 +119,40 @@ private struct RecorderWorkspace: View {
                         .aspectRatio(16.0 / 10.0, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                    ControlBar()
+                    ActiveRecordingControls()
                         .environmentObject(coordinator)
                 }
                 .padding(12)
-                .frame(minWidth: 320)
+                .frame(maxWidth: 780)
+            } else {
+                HSplitView {
+                    VStack(spacing: 12) {
+                        RecordingStatusPane()
+                            .environmentObject(coordinator)
+                            .padding(10)
+                            .liquidGlassSurface(cornerRadius: 24)
+                            .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                SettingsPane()
-                    .environmentObject(coordinator)
-                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
+                        ControlBar()
+                            .environmentObject(coordinator)
+                    }
+                    .padding(12)
+                    .frame(minWidth: 320)
+
+                    SettingsPane()
+                        .environmentObject(coordinator)
+                        .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
+                }
             }
         }
         .frame(minWidth: 560, minHeight: 360)
+    }
+
+    private var showsActiveRecordingControls: Bool {
+        coordinator.state == .recording
+            || coordinator.state == .paused
+            || coordinator.state == .stopping
     }
 }
 
@@ -3766,6 +3788,48 @@ private struct StatusPill: View {
             .padding(.vertical, 5)
             .liquidGlassSurface(cornerRadius: 10)
             .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct ActiveRecordingControls: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Button {
+                coordinator.togglePause()
+            } label: {
+                Label(
+                    coordinator.state == .paused ? "Resume Recording" : "Pause Recording",
+                    systemImage: coordinator.state == .paused ? "play.fill" : "pause.fill"
+                )
+                .font(.title2.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 72)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.orange)
+            .disabled(!coordinator.canPauseOrResume)
+            .accessibilityHint("Keeps the current recording session open")
+
+            Button(role: .destructive) {
+                Task {
+                    await coordinator.stopRecording()
+                }
+            } label: {
+                Label("Stop Recording", systemImage: "stop.fill")
+                    .font(.title2.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 72)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.red)
+            .disabled(!coordinator.canStop)
+            .keyboardShortcut(".", modifiers: [.command])
+            .accessibilityHint("Finishes and saves the current recording")
+        }
+        .padding(18)
+        .liquidGlassSurface(cornerRadius: 22)
     }
 }
 
