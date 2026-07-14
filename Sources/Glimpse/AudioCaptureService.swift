@@ -12,7 +12,7 @@ enum AudioSourceKind {
 
 final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     var sampleHandler: ((CMSampleBuffer, AudioSourceKind) -> Void)?
-    var levelHandler: ((Double) -> Void)?
+    var levelHandler: ((Double, AudioSourceKind) -> Void)?
 
     static var isSystemAudioCaptureSupported: Bool {
         if #available(macOS 13.0, *) {
@@ -45,12 +45,13 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
             try prepareMicrophone(deviceID: microphoneDeviceID)
         } else {
             clearMicrophoneConfiguration()
-            levelHandler?(0)
+            levelHandler?(0, .microphone)
         }
 
         if includeSystemAudio {
             let systemAudioStream = SystemAudioStream()
             systemAudioStream.sampleHandler = { [weak self] sampleBuffer in
+                self?.levelHandler?(Self.normalizedLevel(from: sampleBuffer), .system)
                 self?.sampleHandler?(sampleBuffer, .system)
             }
             do {
@@ -67,11 +68,13 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
 
     func start() async throws {
         if includeMicrophone {
-            microphoneSessionQueue.async { [microphoneSession] in
-                guard !microphoneSession.isRunning else {
-                    return
+            await withCheckedContinuation { continuation in
+                microphoneSessionQueue.async { [microphoneSession] in
+                    if !microphoneSession.isRunning {
+                        microphoneSession.startRunning()
+                    }
+                    continuation.resume()
                 }
-                microphoneSession.startRunning()
             }
         }
 
@@ -81,11 +84,13 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
     }
 
     func stop() async {
-        microphoneSessionQueue.async { [microphoneSession] in
-            guard microphoneSession.isRunning else {
-                return
+        await withCheckedContinuation { continuation in
+            microphoneSessionQueue.async { [microphoneSession] in
+                if microphoneSession.isRunning {
+                    microphoneSession.stopRunning()
+                }
+                continuation.resume()
             }
-            microphoneSession.stopRunning()
         }
         await systemAudioStream?.stop()
         systemAudioStream = nil
@@ -100,7 +105,7 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         from connection: AVCaptureConnection
     ) {
         if let averagePower = connection.audioChannels.first?.averagePowerLevel {
-            levelHandler?(Self.normalizedLevel(fromAveragePower: averagePower))
+            levelHandler?(Self.normalizedLevel(fromAveragePower: averagePower), .microphone)
         }
         sampleHandler?(sampleBuffer, .microphone)
     }
@@ -151,6 +156,83 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         }
         let clamped = max(-60, min(0, averagePower))
         return pow(10, Double(clamped) / 20)
+    }
+
+    private static func normalizedLevel(from sampleBuffer: CMSampleBuffer) -> Double {
+        let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+        guard frameCount > 0,
+              let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else {
+            return 0
+        }
+        let format = AVAudioFormat(cmAudioFormatDescription: formatDescription)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return 0
+        }
+
+        buffer.frameLength = frameCount
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: buffer.mutableAudioBufferList
+        )
+        guard status == noErr else {
+            return 0
+        }
+
+        let audioBuffers = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        var squaredTotal = 0.0
+        var sampleCount = 0
+
+        for audioBuffer in audioBuffers {
+            guard let data = audioBuffer.mData else {
+                continue
+            }
+
+            switch format.commonFormat {
+            case .pcmFormatFloat32:
+                let count = Int(audioBuffer.mDataByteSize) / MemoryLayout<Float>.size
+                let samples = data.assumingMemoryBound(to: Float.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index])
+                    squaredTotal += sample * sample
+                }
+                sampleCount += count
+            case .pcmFormatFloat64:
+                let count = Int(audioBuffer.mDataByteSize) / MemoryLayout<Double>.size
+                let samples = data.assumingMemoryBound(to: Double.self)
+                for index in 0..<count {
+                    let sample = samples[index]
+                    squaredTotal += sample * sample
+                }
+                sampleCount += count
+            case .pcmFormatInt16:
+                let count = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int16>.size
+                let samples = data.assumingMemoryBound(to: Int16.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index]) / Double(Int16.max)
+                    squaredTotal += sample * sample
+                }
+                sampleCount += count
+            case .pcmFormatInt32:
+                let count = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int32>.size
+                let samples = data.assumingMemoryBound(to: Int32.self)
+                for index in 0..<count {
+                    let sample = Double(samples[index]) / Double(Int32.max)
+                    squaredTotal += sample * sample
+                }
+                sampleCount += count
+            case .otherFormat:
+                continue
+            @unknown default:
+                continue
+            }
+        }
+
+        guard sampleCount > 0 else {
+            return 0
+        }
+        return min(1, sqrt(squaredTotal / Double(sampleCount)))
     }
 }
 

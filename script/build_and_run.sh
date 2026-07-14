@@ -14,7 +14,6 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-APP_ICON_SOURCE="$ROOT_DIR/Sources/Glimpse/Resources/AppIcon.icns"
 
 cd "$ROOT_DIR"
 
@@ -47,9 +46,7 @@ copy_swiftpm_resources() {
 
 copy_swiftpm_resources
 
-if [[ -f "$APP_ICON_SOURCE" ]]; then
-  cp "$APP_ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
-fi
+"$ROOT_DIR/scripts/compile_app_icon.sh" "$ROOT_DIR" "$APP_RESOURCES" "$MIN_SYSTEM_VERSION"
 
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -20,9 +20,11 @@ final class RecordingCoordinator: ObservableObject {
     @Published var availableCameras: [SourceDevice] = []
     @Published var availableMicrophones: [SourceDevice] = []
     @Published var previewImage: NSImage?
+    @Published private(set) var cameraPreviewImage: NSImage?
     @Published var statusMessage: String?
     @Published var errorMessage: String?
     @Published var microphoneLevel: Double = 0
+    @Published private(set) var systemAudioLevel: Double = 0
     @Published private(set) var elapsedSeconds: Int = 0
     @Published var isSystemAudioAvailable = true
     @Published private(set) var isSetupPreviewActive = false
@@ -57,6 +59,11 @@ final class RecordingCoordinator: ObservableObject {
     private var lastOutputURL: URL?
     private var activeSourceSet = RecordingSourceSet(camera: false, microphone: false, systemAudio: false)
     private var activeCaptureTargetKind: RecordingCaptureTargetKind = .display
+    private var setupPreviewStartID: UUID?
+    private var setupPreviewStartTask: Task<Void, Never>?
+    private var lastCameraPreviewTimestamp = -Double.infinity
+    private var lastMicrophoneLevelUpdate = -Double.infinity
+    private var lastSystemAudioLevelUpdate = -Double.infinity
     private let lastAutomaticUpdateCheckKey = "Glimpse.lastAutomaticUpdateCheck"
 
     init() {
@@ -300,18 +307,56 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         isSetupPreviewStarting = true
+        let startID = UUID()
+        let startTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            await self.performSetupPreviewStart(id: startID)
+        }
+        setupPreviewStartID = startID
+        setupPreviewStartTask = startTask
+
+        await startTask.value
+
+        if setupPreviewStartID == startID {
+            setupPreviewStartID = nil
+            setupPreviewStartTask = nil
+        }
+    }
+
+    private func performSetupPreviewStart(id startID: UUID) async {
+        defer {
+            if setupPreviewStartID == startID {
+                isSetupPreviewStarting = false
+            }
+        }
         var previewStatus = "Previewing setup"
 
         do {
             if selectedCaptureTarget == nil {
                 await refreshCaptureTargets()
             }
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                return
+            }
 
             _ = try await screenCapture.prepare(target: selectedCaptureTarget)
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                return
+            }
 
             var includeCamera = false
             if settings.overlay.isEnabled {
                 if await isCameraReadyForSetupPreview() {
+                    try Task.checkCancellation()
+                    guard setupPreviewStartID == startID, state == .idle else {
+                        await screenCapture.stop()
+                        return
+                    }
                     do {
                         try cameraCapture.prepare(deviceID: settings.selectedCameraID)
                         includeCamera = true
@@ -323,19 +368,70 @@ final class RecordingCoordinator: ObservableObject {
                 }
             }
 
+            let includeMicrophone = settings.microphoneEnabled
+                && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            let includeSystemAudio = settings.systemAudioEnabled && isSystemAudioAvailable
+            var isAudioMonitorPrepared = false
+            if includeMicrophone || includeSystemAudio {
+                do {
+                    try await audioCapture.prepare(
+                        microphoneDeviceID: settings.selectedMicrophoneID,
+                        includeMicrophone: includeMicrophone,
+                        includeSystemAudio: includeSystemAudio
+                    )
+                    isAudioMonitorPrepared = true
+                } catch {
+                    previewStatus = "Previewing video; audio monitor unavailable"
+                }
+            }
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                cameraCapture.stop()
+                await audioCapture.stop()
+                return
+            }
+
             try await screenCapture.start()
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                cameraCapture.stop()
+                await audioCapture.stop()
+                return
+            }
             if includeCamera {
                 cameraCapture.start()
+            }
+            if isAudioMonitorPrepared {
+                do {
+                    try await audioCapture.start()
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    await audioCapture.stop()
+                    previewStatus = "Previewing video; audio monitor unavailable"
+                }
+            }
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                cameraCapture.stop()
+                await audioCapture.stop()
+                return
             }
 
             isSetupPreviewActive = true
             statusMessage = previewStatus
         } catch {
-            await stopSetupPreview()
-            errorMessage = readableError(error)
+            await screenCapture.stop()
+            cameraCapture.stop()
+            await audioCapture.stop()
+            if setupPreviewStartID == startID, !Task.isCancelled {
+                errorMessage = readableError(error)
+            }
         }
 
-        isSetupPreviewStarting = false
     }
 
     func stopSetupPreview() async {
@@ -343,11 +439,29 @@ final class RecordingCoordinator: ObservableObject {
             return
         }
 
+        let startID = setupPreviewStartID
+        let startTask = setupPreviewStartTask
+        // ScreenCaptureKit preparation is asynchronous. Wait for a cancelled start to unwind
+        // before another preview or an explicit recording reuses the capture service.
+        startTask?.cancel()
+        await startTask?.value
+        if setupPreviewStartID == startID {
+            setupPreviewStartID = nil
+            setupPreviewStartTask = nil
+        }
+
         await screenCapture.stop()
         cameraCapture.stop()
+        await audioCapture.stop()
         isSetupPreviewActive = false
         isSetupPreviewStarting = false
         previewImage = nil
+        cameraPreviewImage = nil
+        microphoneLevel = 0
+        systemAudioLevel = 0
+        lastCameraPreviewTimestamp = -Double.infinity
+        lastMicrophoneLevelUpdate = -Double.infinity
+        lastSystemAudioLevelUpdate = -Double.infinity
 
         if statusMessage?.hasPrefix("Previewing") == true
             || statusMessage == "Enable Screen Recording to preview setup" {
@@ -618,7 +732,7 @@ final class RecordingCoordinator: ObservableObject {
         }
         cameraCapture.frameHandler = { [weak self] frame in
             Task { @MainActor in
-                self?.compositor.updateCameraFrame(frame)
+                self?.handleCameraFrame(frame)
             }
         }
         audioCapture.sampleHandler = { [weak self] sampleBuffer, source in
@@ -639,10 +753,47 @@ final class RecordingCoordinator: ObservableObject {
                 )
             }
         }
-        audioCapture.levelHandler = { [weak self] level in
+        audioCapture.levelHandler = { [weak self] level, source in
             Task { @MainActor in
-                self?.microphoneLevel = self?.settings.microphoneEnabled == true ? level : 0
+                self?.handleAudioLevel(level, source: source)
             }
+        }
+    }
+
+    private func handleCameraFrame(_ frame: CapturedVideoFrame) {
+        compositor.updateCameraFrame(frame)
+
+        guard settings.overlay.isEnabled,
+              isSetupPreviewActive || isSetupPreviewStarting,
+              frame.timestamp.seconds - lastCameraPreviewTimestamp >= 0.1 else {
+            return
+        }
+
+        lastCameraPreviewTimestamp = frame.timestamp.seconds
+        cameraPreviewImage = compositor.makePreviewImage(from: frame.pixelBuffer)
+    }
+
+    private func handleAudioLevel(_ level: Double, source: AudioSourceKind) {
+        guard state == .recording || isSetupPreviewActive || isSetupPreviewStarting else {
+            return
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        switch source {
+        case .microphone:
+            guard settings.microphoneEnabled,
+                  now - lastMicrophoneLevelUpdate >= 0.05 else {
+                return
+            }
+            lastMicrophoneLevelUpdate = now
+            microphoneLevel = level
+        case .system:
+            guard settings.systemAudioEnabled,
+                  now - lastSystemAudioLevelUpdate >= 0.05 else {
+                return
+            }
+            lastSystemAudioLevelUpdate = now
+            systemAudioLevel = level
         }
     }
 
@@ -820,7 +971,9 @@ final class RecordingCoordinator: ObservableObject {
     private func resetForNewRecording() {
         clearError()
         previewImage = nil
+        cameraPreviewImage = nil
         microphoneLevel = 0
+        systemAudioLevel = 0
         elapsedSeconds = 0
         lastOutputURL = nil
         recordingPresentationToken = nil
@@ -873,6 +1026,8 @@ final class RecordingCoordinator: ObservableObject {
         cameraCapture.stop()
         await audioCapture.stop()
         microphoneLevel = 0
+        systemAudioLevel = 0
+        cameraPreviewImage = nil
     }
 
     private func readableError(_ error: Error) -> String {

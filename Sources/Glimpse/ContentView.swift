@@ -8,7 +8,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
-    @State private var selectedSplashTab: SplashTab = .preview
     @State private var hasStartedPermissionOnboarding = false
 
     var body: some View {
@@ -25,8 +24,8 @@ struct ContentView: View {
                 PermissionOnboardingView()
                     .environmentObject(coordinator)
             } else if coordinator.state == .idle {
-                CompactIdleView(selectedTab: $selectedSplashTab)
-                .environmentObject(coordinator)
+                CompactIdleView()
+                    .environmentObject(coordinator)
             } else {
                 RecorderWorkspace()
                     .environmentObject(coordinator)
@@ -101,22 +100,6 @@ struct ContentView: View {
             return .splash
         }
         return .workspace
-    }
-}
-
-private enum SplashTab: String, CaseIterable, Identifiable {
-    case preview
-    case settings
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .preview:
-            return "Screen"
-        case .settings:
-            return "Settings"
-        }
     }
 }
 
@@ -2862,45 +2845,44 @@ private struct CaptureTargetCard: View {
 
 private struct CompactIdleView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
-    @Binding var selectedTab: SplashTab
 
     var body: some View {
         ZStack {
             LiquidGlassBackdrop()
 
             ScrollView {
-                splashCard
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                VStack(alignment: .leading, spacing: 18) {
+                    readyHeader
+                    readyColumns
+                    recordingFooter
+                }
+                .padding(20)
+                .frame(maxWidth: 1120, alignment: .topLeading)
+                .liquidGlassSurface(cornerRadius: 26)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .scrollIndicators(.automatic)
         }
-        .frame(minWidth: 640, minHeight: 560)
-        .onAppear {
-            if selectedTab == .preview {
-                Task {
-                    await coordinator.startSetupPreview()
-                }
-            }
-        }
-        .onChange(of: selectedTab) { tab in
-            Task {
-                if tab == .preview {
-                    await coordinator.startSetupPreview()
-                } else {
-                    await coordinator.stopSetupPreview()
-                }
-            }
+        .frame(minWidth: 900, minHeight: 600)
+        .task {
+            await coordinator.refreshCaptureTargets()
+            await coordinator.startSetupPreview()
         }
         .onChange(of: coordinator.settings.overlay.isEnabled) { _ in
-            Task {
-                await coordinator.restartSetupPreviewIfNeeded()
-            }
+            restartPreview()
         }
         .onChange(of: coordinator.settings.selectedCameraID) { _ in
-            Task {
-                await coordinator.restartSetupPreviewIfNeeded()
-            }
+            restartPreview()
+        }
+        .onChange(of: coordinator.settings.microphoneEnabled) { _ in
+            restartPreview()
+        }
+        .onChange(of: coordinator.settings.selectedMicrophoneID) { _ in
+            restartPreview()
+        }
+        .onChange(of: coordinator.settings.systemAudioEnabled) { _ in
+            restartPreview()
         }
         .onDisappear {
             Task {
@@ -2909,73 +2891,69 @@ private struct CompactIdleView: View {
         }
     }
 
-    private var splashCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "record.circle")
-                    .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(Color.red)
-                    .frame(width: 44, height: 44)
+    private var readyHeader: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "record.circle.fill")
+                .font(.system(size: 38, weight: .regular))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.red, .red.opacity(0.18))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Glimpse")
-                        .font(.title3.weight(.semibold))
-                    Text("Ready to record")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                StatusPill(text: coordinator.state.displayName, systemImage: "circle")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Ready to record")
+                    .font(.title2.weight(.semibold))
+                Text("Check each source, then start when everything looks and sounds right.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
 
-            LiquidGlassCluster {
-                HStack(spacing: 8) {
-                    LaunchSourceToggle(
-                        title: "Camera",
-                        systemImage: "video",
-                        isOn: $coordinator.settings.overlay.isEnabled
-                    )
-                    LaunchSourceToggle(
-                        title: "Mic",
-                        systemImage: "mic",
-                        isOn: $coordinator.settings.microphoneEnabled
-                    )
-                    LaunchSourceToggle(
-                        title: "System",
-                        systemImage: "speaker.wave.2",
-                        isOn: $coordinator.settings.systemAudioEnabled
-                    )
-                    .disabled(!coordinator.isSystemAudioAvailable)
-                }
+            Spacer()
+        }
+    }
+
+    private var readyColumns: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ReadyCameraColumn()
+                .environmentObject(coordinator)
+                .frame(maxWidth: .infinity)
+            ReadyMicrophoneColumn()
+                .environmentObject(coordinator)
+                .frame(maxWidth: .infinity)
+            ReadySystemAudioColumn()
+                .environmentObject(coordinator)
+                .frame(maxWidth: .infinity)
+            ReadyScreenColumn()
+                .environmentObject(coordinator)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var recordingFooter: some View {
+        HStack(spacing: 12) {
+            Label(
+                "Saving to \(coordinator.settings.outputDirectory.lastPathComponent)",
+                systemImage: "folder"
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+
+            Button("Change Folder") {
+                coordinator.chooseOutputDirectory()
             }
 
-            if coordinator.settings.overlay.isEnabled {
-                CompactOverlayMenus()
-                    .environmentObject(coordinator)
+            HStack(spacing: 6) {
+                Text("Name prefix")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                TextField("screen-recording", text: $coordinator.settings.fileNamePrefix)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 156)
+                    .accessibilityLabel("Recording file name prefix")
+                    .accessibilityHint("The recording date and time are added automatically")
             }
 
-            Picker("Setup View", selection: $selectedTab) {
-                ForEach(SplashTab.allCases) { tab in
-                    Text(tab.title).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Setup View")
-
-            Group {
-                switch selectedTab {
-                case .preview:
-                    SplashPreviewPanel()
-                        .environmentObject(coordinator)
-                case .settings:
-                    SplashSettingsPanel()
-                        .environmentObject(coordinator)
-                }
-            }
-            .frame(minHeight: 300, alignment: .top)
+            Spacer()
 
             Button {
                 Task {
@@ -2990,55 +2968,244 @@ private struct CompactIdleView: View {
             .disabled(!coordinator.canStart)
             .keyboardShortcut("r", modifiers: [.command])
         }
-        .padding(18)
-        .frame(
-            minWidth: 600,
-            idealWidth: 760,
-            maxWidth: 820,
-            alignment: .topLeading
-        )
-        .liquidGlassSurface(cornerRadius: 26)
     }
-}
 
-private struct SplashPreviewPanel: View {
-    @EnvironmentObject private var coordinator: RecordingCoordinator
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SplashCaptureTargetSelector()
-                .environmentObject(coordinator)
-
-            PreviewPane()
-                .environmentObject(coordinator)
-                .frame(height: 230)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            if let status = coordinator.statusMessage {
-                Label(status, systemImage: coordinator.isSetupPreviewStarting ? "hourglass" : "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-        .task {
-            await coordinator.refreshCaptureTargets()
+    private func restartPreview() {
+        Task {
             await coordinator.restartSetupPreviewIfNeeded()
         }
     }
 }
 
-private struct SplashCaptureTargetSelector: View {
+private struct ReadySourceCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+    let content: Content
+
+    init(
+        title: String,
+        systemImage: String,
+        accentColor: Color,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.accentColor = accentColor
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 38, weight: .medium))
+                .foregroundStyle(accentColor)
+                .frame(width: 68, height: 68)
+                .background(accentColor.opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+
+            Divider()
+
+            content
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 390, maxHeight: 390, alignment: .top)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        }
+    }
+}
+
+private struct ReadyCameraColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Label("Screen Recording", systemImage: "display")
-                    .font(.headline)
+        ReadySourceCard(title: "Camera", systemImage: "video.fill", accentColor: .blue) {
+            Toggle("Include camera", isOn: $coordinator.settings.overlay.isEnabled)
+                .toggleStyle(.switch)
 
-                Spacer()
+            ReadyCameraPreview()
+                .environmentObject(coordinator)
+
+            Picker("Camera", selection: $coordinator.settings.selectedCameraID) {
+                Text("Default Camera").tag(String?.none)
+                ForEach(coordinator.availableCameras) { camera in
+                    Text(camera.name).tag(Optional(camera.id))
+                }
+            }
+            .labelsHidden()
+            .accessibilityLabel("Camera")
+
+            Picker("Size", selection: $coordinator.settings.overlay.sizePreset) {
+                ForEach(OverlaySizePreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!coordinator.settings.overlay.isEnabled)
+            .accessibilityLabel("Camera overlay size")
+        }
+    }
+}
+
+private struct ReadyCameraPreview: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black.opacity(0.24))
+
+            if !coordinator.settings.overlay.isEnabled {
+                previewPlaceholder(systemImage: "video.slash", text: "Camera off")
+            } else if let image = coordinator.cameraPreviewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .accessibilityLabel("Live camera preview")
+            } else if coordinator.isSetupPreviewStarting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Starting camera preview")
+            } else {
+                previewPlaceholder(systemImage: "video", text: "Waiting for camera")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func previewPlaceholder(systemImage: String, text: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.title2)
+            Text(text)
+                .font(.caption)
+        }
+        .foregroundStyle(.secondary)
+    }
+}
+
+private struct ReadyMicrophoneColumn: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        ReadySourceCard(title: "Microphone", systemImage: "mic.fill", accentColor: .green) {
+            Toggle("Include microphone", isOn: $coordinator.settings.microphoneEnabled)
+                .toggleStyle(.switch)
+
+            ReadyAudioFeedback(
+                level: coordinator.microphoneLevel,
+                isEnabled: coordinator.settings.microphoneEnabled,
+                listeningText: "Listening to microphone",
+                color: .green
+            )
+
+            Picker("Microphone", selection: $coordinator.settings.selectedMicrophoneID) {
+                Text("Default Microphone").tag(String?.none)
+                ForEach(coordinator.availableMicrophones) { microphone in
+                    Text(microphone.name).tag(Optional(microphone.id))
+                }
+            }
+            .labelsHidden()
+            .disabled(!coordinator.settings.microphoneEnabled)
+            .accessibilityLabel("Microphone")
+
+            ReadyGainSlider(
+                title: "Mic gain",
+                value: $coordinator.settings.microphoneGain,
+                systemImage: "mic"
+            )
+            .disabled(!coordinator.settings.microphoneEnabled)
+        }
+    }
+}
+
+private struct ReadySystemAudioColumn: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        ReadySourceCard(title: "System Audio", systemImage: "speaker.wave.2.fill", accentColor: .purple) {
+            Toggle("Include system audio", isOn: $coordinator.settings.systemAudioEnabled)
+                .toggleStyle(.switch)
+                .disabled(!coordinator.isSystemAudioAvailable)
+
+            ReadyAudioFeedback(
+                level: coordinator.systemAudioLevel,
+                isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
+                listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
+                color: .purple
+            )
+
+            Text("Play something to check that its level moves.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ReadyGainSlider(
+                title: "System gain",
+                value: $coordinator.settings.systemAudioGain,
+                systemImage: "speaker.wave.2"
+            )
+            .disabled(!coordinator.settings.systemAudioEnabled || !coordinator.isSystemAudioAvailable)
+        }
+    }
+}
+
+private struct ReadyScreenColumn: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        ReadySourceCard(title: "Screen Recording", systemImage: "display", accentColor: .orange) {
+            Label("Always included", systemImage: "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            ReadyScreenPreview()
+                .environmentObject(coordinator)
+
+            Menu {
+                ForEach(coordinator.captureTargets) { target in
+                    Button {
+                        Task {
+                            await coordinator.selectCaptureTarget(target)
+                        }
+                    } label: {
+                        Label(
+                            target.title,
+                            systemImage: target.id == coordinator.selectedCaptureTarget?.id
+                                ? "checkmark.circle.fill"
+                                : target.systemImage
+                        )
+                    }
+                }
+            } label: {
+                Label(
+                    coordinator.selectedCaptureTarget?.title ?? "Choose a screen or window",
+                    systemImage: coordinator.selectedCaptureTarget?.systemImage ?? "display"
+                )
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .disabled(coordinator.isLoadingCaptureTargets || coordinator.captureTargets.isEmpty)
+            .accessibilityLabel("Screen recording target")
+
+            HStack(spacing: 8) {
+                Text(screenTargetDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
                     Task {
@@ -3046,101 +3213,126 @@ private struct SplashCaptureTargetSelector: View {
                         await coordinator.restartSetupPreviewIfNeeded()
                     }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(coordinator.isLoadingCaptureTargets)
-            }
-
-            Group {
-                if coordinator.isLoadingCaptureTargets {
-                    HStack(spacing: 8) {
+                    if coordinator.isLoadingCaptureTargets {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Loading displays and windows")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
                     }
-                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
-                } else if coordinator.captureTargets.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "display.slash")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
-                        Text("No displays or windows available")
-                            .font(.callout.weight(.medium))
-                        Text("Enable Screen Recording permission, then refresh.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
-                    .liquidGlassSurface(cornerRadius: 16)
-                } else {
-                    ScrollView(.horizontal) {
-                        LazyHStack(spacing: 12) {
-                            ForEach(coordinator.captureTargets) { target in
-                                let isSelected = target.id == coordinator.selectedCaptureTarget?.id
-
-                                Button {
-                                    Task {
-                                        await coordinator.selectCaptureTarget(target)
-                                    }
-                                } label: {
-                                    CaptureTargetCard(
-                                        target: target,
-                                        actionTitle: isSelected ? "Selected" : "Select",
-                                        actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
-                                        isSelected: isSelected
-                                    )
-                                    .frame(width: 238)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                    .frame(height: 210)
                 }
+                .buttonStyle(.borderless)
+                .disabled(coordinator.isLoadingCaptureTargets)
+                .help("Refresh screens and windows")
+                .accessibilityLabel("Refresh screens and windows")
             }
         }
+    }
+
+    private var screenTargetDetail: String {
+        if coordinator.isLoadingCaptureTargets {
+            return "Finding screens and windows…"
+        }
+        if let selectedTarget = coordinator.selectedCaptureTarget {
+            return selectedTarget.subtitle
+        }
+        return "No capture target available"
     }
 }
 
-private struct SplashSettingsPanel: View {
+private struct ReadyScreenPreview: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 18) {
-                    primarySettingsColumn
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                    secondarySettingsColumn
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black.opacity(0.24))
 
-                VStack(alignment: .leading, spacing: 16) {
-                    primarySettingsColumn
-                    secondarySettingsColumn
+            if let image = coordinator.previewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .accessibilityLabel("Live screen preview")
+            } else if coordinator.isSetupPreviewStarting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Starting screen preview")
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "display")
+                        .font(.title2)
+                    Text("Waiting for screen")
+                        .font(.caption)
                 }
+                .foregroundStyle(.secondary)
             }
         }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
+}
 
-    private var primarySettingsColumn: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            OutputSettings()
-                .environmentObject(coordinator)
-            VideoSettings()
-                .environmentObject(coordinator)
+private struct ReadyAudioFeedback: View {
+    private static let barProfile: [Double] = [
+        0.30, 0.48, 0.72, 0.44, 0.88, 0.58, 1.00, 0.67,
+        0.42, 0.82, 0.54, 0.94, 0.61, 0.76, 0.46, 0.28
+    ]
+
+    let level: Double
+    let isEnabled: Bool
+    let listeningText: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(Self.barProfile.indices, id: \.self) { index in
+                    Capsule()
+                        .fill(isEnabled ? color : Color.secondary.opacity(0.35))
+                        .frame(width: 4, height: barHeight(at: index))
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76)
+            .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .animation(.easeOut(duration: 0.08), value: level)
+
+            Text(isEnabled ? listeningText : "Source off")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(listeningText)
+        .accessibilityValue(isEnabled ? "Level \(Int(min(1, max(0, level)) * 100)) percent" : "Off")
     }
 
-    private var secondarySettingsColumn: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            AudioSettings()
-                .environmentObject(coordinator)
-            OverlaySettingsView()
-                .environmentObject(coordinator)
+    private func barHeight(at index: Int) -> Double {
+        guard isEnabled else {
+            return 4
+        }
+        let visibleLevel = max(0.035, min(1, level * 2.6))
+        return max(4, 68 * Self.barProfile[index] * visibleLevel)
+    }
+}
+
+private struct ReadyGainSlider: View {
+    let title: String
+    @Binding var value: Float
+    let systemImage: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(title, systemImage: systemImage)
+                Spacer()
+                Text("\(Int(value * 100))%")
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Slider(value: $value, in: 0...2)
+                .accessibilityLabel(title)
         }
     }
 }
@@ -3459,86 +3651,6 @@ private struct RecordingStatusPane: View {
     }
 }
 
-private struct PreviewPane: View {
-    @EnvironmentObject private var coordinator: RecordingCoordinator
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.black.opacity(0.12))
-
-            if let image = coordinator.previewImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .accessibilityLabel("Composite preview")
-            } else {
-                VStack(spacing: 10) {
-                    Image(systemName: "display")
-                        .font(.system(size: 44, weight: .regular))
-                        .foregroundStyle(.secondary)
-                    Text(coordinator.state.displayName)
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            VStack {
-                HStack(spacing: 8) {
-                    StatusPill(text: coordinator.state.displayName, systemImage: stateIcon)
-                    if coordinator.settings.systemAudioEnabled {
-                        StatusPill(text: "System", systemImage: "speaker.wave.2")
-                    }
-                    if coordinator.settings.microphoneEnabled {
-                        StatusPill(text: "Mic", systemImage: "mic")
-                    }
-                    if coordinator.settings.overlay.isEnabled {
-                        StatusPill(text: "Camera", systemImage: "video")
-                    }
-                    Spacer()
-                    if coordinator.state == .recording || coordinator.state == .paused {
-                        TimerOverlayPill(label: coordinator.elapsedTimeLabel)
-                    }
-                }
-                .padding(14)
-                Spacer()
-            }
-        }
-    }
-
-    private var stateIcon: String {
-        switch coordinator.state {
-        case .recording:
-            return "record.circle"
-        case .paused:
-            return "pause.circle"
-        case .error:
-            return "exclamationmark.triangle"
-        default:
-            return "circle"
-        }
-    }
-}
-
-private struct TimerOverlayPill: View {
-    let label: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "timer")
-            Text(label)
-                .font(.system(.caption, design: .monospaced).monospacedDigit())
-                .frame(width: 62, alignment: .leading)
-                .lineLimit(1)
-        }
-        .font(.caption.weight(.medium))
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .liquidGlassSurface(cornerRadius: 10)
-        .fixedSize(horizontal: true, vertical: false)
-    }
-}
-
 private struct StatusPill: View {
     var text: String
     var systemImage: String
@@ -3764,43 +3876,6 @@ private struct SourceToggle: View {
     }
 }
 
-private struct LaunchSourceToggle: View {
-    @Environment(\.isEnabled) private var isEnabled
-    let title: String
-    let systemImage: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Toggle(isOn: $isOn) {
-            Label(title, systemImage: displayedSystemImage)
-                .font(.caption.weight(.semibold))
-                .labelStyle(.titleAndIcon)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-        }
-        .toggleStyle(.button)
-        .buttonStyle(.plain)
-        .foregroundStyle(isOn ? Color.primary : Color.secondary)
-        .liquidGlassSurface(
-            cornerRadius: 16,
-            tint: isOn ? Color.accentColor.opacity(0.26) : nil,
-            interactive: true
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(isOn ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
-        }
-        .opacity(isEnabled ? 1 : 0.45)
-        .help(isOn ? "\(title) On" : "\(title) Off")
-        .accessibilityLabel(title)
-        .accessibilityValue(isOn ? "On" : "Off")
-    }
-
-    private var displayedSystemImage: String {
-        isOn ? systemImage : sourceDisabledSystemImage(for: systemImage)
-    }
-}
-
 private func sourceDisabledSystemImage(for systemImage: String) -> String {
     switch systemImage {
     case "video":
@@ -3811,48 +3886,6 @@ private func sourceDisabledSystemImage(for systemImage: String) -> String {
         return "speaker.slash"
     default:
         return systemImage
-    }
-}
-
-private struct CompactOverlayMenus: View {
-    @EnvironmentObject private var coordinator: RecordingCoordinator
-
-    var body: some View {
-        LiquidGlassCluster {
-            HStack(spacing: 8) {
-                Menu {
-                    Picker("Camera Position", selection: $coordinator.settings.overlay.position) {
-                        ForEach(OverlayPosition.allCases) { position in
-                            Label(position.displayName, systemImage: position.systemImage)
-                                .tag(position)
-                        }
-                    }
-                } label: {
-                    Label(coordinator.settings.overlay.position.displayName, systemImage: coordinator.settings.overlay.position.systemImage)
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .liquidGlassSurface(cornerRadius: 16, interactive: true)
-
-                Menu {
-                    Picker("Camera Shape", selection: $coordinator.settings.overlay.shape) {
-                        ForEach(OverlayShape.allCases) { shape in
-                            Label(shape.displayName, systemImage: shape.systemImage)
-                                .tag(shape)
-                        }
-                    }
-                } label: {
-                    Label(coordinator.settings.overlay.shape.displayName, systemImage: coordinator.settings.overlay.shape.systemImage)
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.plain)
-                .liquidGlassSurface(cornerRadius: 16, interactive: true)
-            }
-        }
     }
 }
 
@@ -4216,7 +4249,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 540, height: 480)
         case .splash:
-            return NSSize(width: 640, height: 560)
+            return NSSize(width: 900, height: 600)
         case .editor:
             return NSSize(width: 880, height: 620)
         case .onboarding:
@@ -4231,7 +4264,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 640, height: 540)
         case .splash:
-            return NSSize(width: 820, height: 680)
+            return NSSize(width: 1060, height: 660)
         case .editor:
             return NSSize(width: 1120, height: 720)
         case .onboarding:
