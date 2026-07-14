@@ -4,19 +4,36 @@ import Foundation
 import GlimpseCore
 import SwiftUI
 
+@MainActor
+private final class GlimpseMainWindowRegistry {
+    static let shared = GlimpseMainWindowRegistry()
+
+    weak var window: NSWindow?
+    var lastMinimizedRecordingToken: UUID?
+    var didRestoreCompletedRecording = false
+}
+
+@MainActor
 enum GlimpseWindowPresenter {
     static func showMainWindow(preferredWindow: NSWindow? = nil) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        if let preferredWindow {
-            show(window: preferredWindow)
-            return
+        var candidate = preferredWindow
+        if candidate == nil {
+            candidate = GlimpseMainWindowRegistry.shared.window
         }
-
-        let candidate = NSApp.windows.first { window in
-            window.canBecomeMain && !window.isReleasedWhenClosed
-        } ?? NSApp.windows.first
+        if candidate == nil {
+            candidate = NSApp.mainWindow
+        }
+        if candidate == nil {
+            candidate = NSApp.keyWindow
+        }
+        if candidate == nil {
+            candidate = NSApp.windows.first { window in
+                window.canBecomeMain && !window.isReleasedWhenClosed
+            }
+        }
 
         if let candidate {
             show(window: candidate)
@@ -44,30 +61,36 @@ struct RecordingWindowLifecycleController: NSViewRepresentable {
             guard let window = nsView.window else {
                 return
             }
+            let registry = GlimpseMainWindowRegistry.shared
+            registry.window = window
 
             if let recordingPresentationToken,
-               context.coordinator.lastMinimizedToken != recordingPresentationToken {
-                context.coordinator.lastMinimizedToken = recordingPresentationToken
+               registry.lastMinimizedRecordingToken != recordingPresentationToken {
+                registry.lastMinimizedRecordingToken = recordingPresentationToken
                 window.miniaturize(nil)
             }
 
             if shouldRestoreAfterRecording,
-               !context.coordinator.didRestoreAfterRecording {
-                context.coordinator.didRestoreAfterRecording = true
+               !registry.didRestoreCompletedRecording {
+                registry.didRestoreCompletedRecording = true
                 GlimpseWindowPresenter.showMainWindow(preferredWindow: window)
             } else if !shouldRestoreAfterRecording {
-                context.coordinator.didRestoreAfterRecording = false
+                registry.didRestoreCompletedRecording = false
             }
         }
     }
+}
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    final class Coordinator {
-        var lastMinimizedToken: UUID?
-        var didRestoreAfterRecording = false
+@MainActor
+final class GlimpseAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if !flag {
+            GlimpseWindowPresenter.showMainWindow()
+        }
+        return true
     }
 }
 #endif

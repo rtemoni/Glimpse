@@ -2,6 +2,31 @@ import XCTest
 @testable import GlimpseCore
 
 final class TimelineEditingTests: XCTestCase {
+    func testRecordingLeadTrimRemovesFirstSecond() {
+        let range = RecordingLeadTrimPolicy.retainedRange(sourceDuration: 12)
+
+        XCTAssertEqual(range, TimelineRange(start: 1, end: 12))
+    }
+
+    func testRecordingLeadTrimPreservesMinimumDurationForShortRecording() {
+        let range = RecordingLeadTrimPolicy.retainedRange(sourceDuration: 0.5)
+
+        XCTAssertEqual(range.start, 0.4, accuracy: 0.000_001)
+        XCTAssertEqual(range.end, 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(range.duration, 0.1, accuracy: 0.000_001)
+    }
+
+    func testRecordingLeadTrimHandlesInvalidAndTinyDurationsSafely() {
+        XCTAssertEqual(
+            RecordingLeadTrimPolicy.retainedRange(sourceDuration: 0.05),
+            TimelineRange(start: 0, end: 0.05)
+        )
+        XCTAssertEqual(
+            RecordingLeadTrimPolicy.retainedRange(sourceDuration: .nan),
+            TimelineRange(start: 0, end: 0)
+        )
+    }
+
     func testDefaultSessionKeepsFullDuration() {
         let session = EditingSession(sourceDuration: 12)
 
