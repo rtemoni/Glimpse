@@ -6,6 +6,7 @@ Glimpse is a SwiftPM-based macOS recording app that captures the screen, webcam,
 
 - macOS 13 or later
 - Xcode command line tools or a Swift toolchain that can link SwiftUI, AVFoundation, ScreenCaptureKit, CoreImage, and AVAssetWriter
+- Xcode 26 or later to compile the layered Liquid Glass app icon (older toolchains use the bundled `.icns` fallback)
 
 ## Build and Run
 
@@ -33,7 +34,8 @@ scripts/create_dmg.sh
 
 - `Contents/Info.plist`
 - `Contents/MacOS/Glimpse`
-- `Contents/Resources/AppIcon.icns`
+- `Contents/Resources/Assets.car` with default, dark, and tintable Liquid Glass icon appearances when Xcode 26 is available
+- `Contents/Resources/AppIcon.icns` with 16–1024 px fallback artwork for macOS 13–25 and command-line launches
 - `Contents/Frameworks`, `Contents/PlugIns`, and `Contents/SharedSupport` placeholders for future bundled dependencies
 
 Set `SIGNING_IDENTITY` to sign with a Developer ID Application certificate:
@@ -43,6 +45,12 @@ SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/build_ap
 ```
 
 Without `SIGNING_IDENTITY`, the script applies an ad-hoc local signature so the bundle can still be inspected and tested locally.
+
+The icon source lives in `Sources/Glimpse/Resources/AppIcon.icon`. After changing its foreground artwork or legacy background treatment, regenerate the checked-in icon set and `.icns` entirely from the command line:
+
+```sh
+scripts/generate_app_icons.swift
+```
 
 `scripts/create_dmg.sh` creates `.build/distribution/Glimpse-<version>.dmg` with a drag-and-drop installer layout:
 

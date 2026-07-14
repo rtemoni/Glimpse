@@ -11,8 +11,6 @@ CONFIGURATION="${CONFIGURATION:-release}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/.build/distribution}"
 INFO_PLIST_SOURCE="${INFO_PLIST_SOURCE:-$REPO_ROOT/Info.plist}"
 ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$REPO_ROOT/Signing/ScreenCamRecorder.entitlements}"
-ICON_SOURCE_DIR="${ICON_SOURCE_DIR:-$REPO_ROOT/Sources/Glimpse/Resources/Assets.xcassets/AppIcon.appiconset}"
-ICON_SOURCE_ICNS="${ICON_SOURCE_ICNS:-$REPO_ROOT/Sources/Glimpse/Resources/AppIcon.icns}"
 RESOURCE_BUNDLE_NAME="${RESOURCE_BUNDLE_NAME:-Glimpse_Glimpse.bundle}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-13.0}"
 SKIP_CODESIGN="${SKIP_CODESIGN:-0}"
@@ -88,18 +86,7 @@ plist_set_bool "NSHighResolutionCapable" "true"
 
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
-if [[ -f "$ICON_SOURCE_ICNS" ]]; then
-    cp "$ICON_SOURCE_ICNS" "$RESOURCES_DIR/AppIcon.icns"
-elif [[ -d "$ICON_SOURCE_DIR" ]]; then
-    TMP_ICONSET="$OUTPUT_DIR/AppIcon.iconset"
-    rm -rf "$TMP_ICONSET"
-    mkdir -p "$TMP_ICONSET"
-    cp "$ICON_SOURCE_DIR"/icon_*.png "$TMP_ICONSET"/
-    iconutil -c icns "$TMP_ICONSET" -o "$RESOURCES_DIR/AppIcon.icns"
-    rm -rf "$TMP_ICONSET"
-else
-    echo "Icon source directory not found at $ICON_SOURCE_DIR" >&2
-fi
+"$SCRIPT_DIR/compile_app_icon.sh" "$REPO_ROOT" "$RESOURCES_DIR" "$MINIMUM_SYSTEM_VERSION"
 
 if [[ -d "$BIN_PATH/$RESOURCE_BUNDLE_NAME" ]]; then
     cp -R "$BIN_PATH/$RESOURCE_BUNDLE_NAME" "$RESOURCES_DIR/"
