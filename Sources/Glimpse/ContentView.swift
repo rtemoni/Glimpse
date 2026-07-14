@@ -2850,21 +2850,29 @@ private struct CompactIdleView: View {
         ZStack {
             LiquidGlassBackdrop()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    readyHeader
-                    readyColumns
-                    recordingFooter
+            VStack(spacing: 12) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        readyHeader
+                        readyVisualSources
+                        readyAudioSources
+                        recordingOptions
+                    }
+                    .padding(20)
+                    .frame(maxWidth: 1180, alignment: .topLeading)
+                    .liquidGlassSurface(cornerRadius: 26)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .padding(20)
-                .frame(maxWidth: 1120, alignment: .topLeading)
-                .liquidGlassSurface(cornerRadius: 26)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .scrollIndicators(.automatic)
+
+                startRecordingAction
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 18)
             }
-            .scrollIndicators(.automatic)
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 900, minHeight: 680)
         .task {
             await coordinator.refreshCaptureTargets()
             await coordinator.startSetupPreview()
@@ -2907,27 +2915,52 @@ private struct CompactIdleView: View {
             }
 
             Spacer()
+
+            Button {
+                Task {
+                    await coordinator.checkForUpdates(userInitiated: true)
+                }
+            } label: {
+                if coordinator.isCheckingForUpdates {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking…")
+                    }
+                } else {
+                    Label("Check for Updates", systemImage: "arrow.down.circle")
+                }
+            }
+            .disabled(coordinator.isCheckingForUpdates)
+            .help("Check GitHub for a newer Glimpse release")
         }
     }
 
-    private var readyColumns: some View {
-        HStack(alignment: .top, spacing: 12) {
+    private var readyVisualSources: some View {
+        HStack(alignment: .top, spacing: 14) {
             ReadyCameraColumn()
                 .environmentObject(coordinator)
-                .frame(maxWidth: .infinity)
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+                .layoutPriority(0)
+            ReadyScreenColumn()
+                .environmentObject(coordinator)
+                .frame(minWidth: 460, maxWidth: .infinity)
+                .layoutPriority(1)
+        }
+    }
+
+    private var readyAudioSources: some View {
+        HStack(alignment: .top, spacing: 14) {
             ReadyMicrophoneColumn()
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
             ReadySystemAudioColumn()
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
-            ReadyScreenColumn()
-                .environmentObject(coordinator)
-                .frame(maxWidth: .infinity)
         }
     }
 
-    private var recordingFooter: some View {
+    private var recordingOptions: some View {
         HStack(spacing: 12) {
             Label(
                 "Saving to \(coordinator.settings.outputDirectory.lastPathComponent)",
@@ -2954,20 +2987,28 @@ private struct CompactIdleView: View {
             }
 
             Spacer()
-
-            Button {
-                Task {
-                    await coordinator.startRecording()
-                }
-            } label: {
-                Label("Start Recording", systemImage: "record.circle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .liquidGlassSurface(cornerRadius: 16, tint: .red.opacity(0.22), interactive: true)
-            .disabled(!coordinator.canStart)
-            .keyboardShortcut("r", modifiers: [.command])
         }
+        .padding(.horizontal, 2)
+    }
+
+    private var startRecordingAction: some View {
+        Button {
+            Task {
+                await coordinator.startRecording()
+            }
+        } label: {
+            Label("Start Recording", systemImage: "record.circle.fill")
+                .font(.title3.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(.red)
+        .frame(maxWidth: 1180)
+        .disabled(!coordinator.canStart)
+        .keyboardShortcut("r", modifiers: [.command])
+        .accessibilityHint("Starts recording the selected display or window")
     }
 
     private func restartPreview() {
@@ -2977,7 +3018,7 @@ private struct CompactIdleView: View {
     }
 }
 
-private struct ReadySourceCard<Content: View>: View {
+private struct ReadyVisualSourceCard<Content: View>: View {
     let title: String
     let systemImage: String
     let accentColor: Color
@@ -2996,26 +3037,27 @@ private struct ReadySourceCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 38, weight: .medium))
-                .foregroundStyle(accentColor)
-                .frame(width: 68, height: 68)
-                .background(accentColor.opacity(0.12), in: Circle())
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 38, height: 38)
+                    .background(accentColor.opacity(0.12), in: Circle())
+                    .accessibilityHidden(true)
 
-            Text(title)
-                .font(.headline)
-                .multilineTextAlignment(.center)
+                Text(title)
+                    .font(.headline)
+
+                Spacer()
+            }
 
             Divider()
 
             content
-
-            Spacer(minLength: 0)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 390, maxHeight: 390, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 410, maxHeight: 410, alignment: .topLeading)
         .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -3028,7 +3070,7 @@ private struct ReadyCameraColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Camera", systemImage: "video.fill", accentColor: .blue) {
+        ReadyVisualSourceCard(title: "Camera", systemImage: "video.fill", accentColor: .blue) {
             Toggle("Include camera", isOn: $coordinator.settings.overlay.isEnabled)
                 .toggleStyle(.switch)
 
@@ -3099,33 +3141,42 @@ private struct ReadyMicrophoneColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Microphone", systemImage: "mic.fill", accentColor: .green) {
-            Toggle("Include microphone", isOn: $coordinator.settings.microphoneEnabled)
-                .toggleStyle(.switch)
+        ReadyAudioSourceCard(
+            title: "Microphone",
+            systemImage: "mic.fill",
+            accentColor: .green,
+            toggleTitle: "Include microphone",
+            isOn: $coordinator.settings.microphoneEnabled
+        ) {
+            HStack(alignment: .center, spacing: 16) {
+                ReadyAudioFeedback(
+                    level: coordinator.microphoneLevel,
+                    isEnabled: coordinator.settings.microphoneEnabled,
+                    listeningText: "Listening to microphone",
+                    color: .green
+                )
+                .frame(maxWidth: .infinity)
 
-            ReadyAudioFeedback(
-                level: coordinator.microphoneLevel,
-                isEnabled: coordinator.settings.microphoneEnabled,
-                listeningText: "Listening to microphone",
-                color: .green
-            )
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Microphone", selection: $coordinator.settings.selectedMicrophoneID) {
+                        Text("Default Microphone").tag(String?.none)
+                        ForEach(coordinator.availableMicrophones) { microphone in
+                            Text(microphone.name).tag(Optional(microphone.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .disabled(!coordinator.settings.microphoneEnabled)
+                    .accessibilityLabel("Microphone")
 
-            Picker("Microphone", selection: $coordinator.settings.selectedMicrophoneID) {
-                Text("Default Microphone").tag(String?.none)
-                ForEach(coordinator.availableMicrophones) { microphone in
-                    Text(microphone.name).tag(Optional(microphone.id))
+                    ReadyGainSlider(
+                        title: "Mic gain",
+                        value: $coordinator.settings.microphoneGain,
+                        systemImage: "mic"
+                    )
+                    .disabled(!coordinator.settings.microphoneEnabled)
                 }
+                .frame(minWidth: 190, maxWidth: 240)
             }
-            .labelsHidden()
-            .disabled(!coordinator.settings.microphoneEnabled)
-            .accessibilityLabel("Microphone")
-
-            ReadyGainSlider(
-                title: "Mic gain",
-                value: $coordinator.settings.microphoneGain,
-                systemImage: "mic"
-            )
-            .disabled(!coordinator.settings.microphoneEnabled)
         }
     }
 }
@@ -3134,30 +3185,38 @@ private struct ReadySystemAudioColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "System Audio", systemImage: "speaker.wave.2.fill", accentColor: .purple) {
-            Toggle("Include system audio", isOn: $coordinator.settings.systemAudioEnabled)
-                .toggleStyle(.switch)
-                .disabled(!coordinator.isSystemAudioAvailable)
+        ReadyAudioSourceCard(
+            title: "System Audio",
+            systemImage: "speaker.wave.2.fill",
+            accentColor: .purple,
+            toggleTitle: "Include system audio",
+            isOn: $coordinator.settings.systemAudioEnabled,
+            isAvailable: coordinator.isSystemAudioAvailable
+        ) {
+            HStack(alignment: .center, spacing: 16) {
+                ReadyAudioFeedback(
+                    level: coordinator.systemAudioLevel,
+                    isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
+                    listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
+                    color: .purple
+                )
+                .frame(maxWidth: .infinity)
 
-            ReadyAudioFeedback(
-                level: coordinator.systemAudioLevel,
-                isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
-                listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
-                color: .purple
-            )
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Play something to check that its level moves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-            Text("Play something to check that its level moves.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            ReadyGainSlider(
-                title: "System gain",
-                value: $coordinator.settings.systemAudioGain,
-                systemImage: "speaker.wave.2"
-            )
-            .disabled(!coordinator.settings.systemAudioEnabled || !coordinator.isSystemAudioAvailable)
+                    ReadyGainSlider(
+                        title: "System gain",
+                        value: $coordinator.settings.systemAudioGain,
+                        systemImage: "speaker.wave.2"
+                    )
+                    .disabled(!coordinator.settings.systemAudioEnabled || !coordinator.isSystemAudioAvailable)
+                }
+                .frame(minWidth: 190, maxWidth: 240)
+            }
         }
     }
 }
@@ -3166,46 +3225,13 @@ private struct ReadyScreenColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Screen Recording", systemImage: "display", accentColor: .orange) {
-            Label("Always included", systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            ReadyScreenPreview()
-                .environmentObject(coordinator)
-
-            Menu {
-                ForEach(coordinator.captureTargets) { target in
-                    Button {
-                        Task {
-                            await coordinator.selectCaptureTarget(target)
-                        }
-                    } label: {
-                        Label(
-                            target.title,
-                            systemImage: target.id == coordinator.selectedCaptureTarget?.id
-                                ? "checkmark.circle.fill"
-                                : target.systemImage
-                        )
-                    }
-                }
-            } label: {
-                Label(
-                    coordinator.selectedCaptureTarget?.title ?? "Choose a screen or window",
-                    systemImage: coordinator.selectedCaptureTarget?.systemImage ?? "display"
-                )
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .disabled(coordinator.isLoadingCaptureTargets || coordinator.captureTargets.isEmpty)
-            .accessibilityLabel("Screen recording target")
-
-            HStack(spacing: 8) {
-                Text(screenTargetDetail)
-                    .font(.caption)
+        ReadyVisualSourceCard(title: "Screen Recording", systemImage: "display", accentColor: .orange) {
+            HStack(spacing: 10) {
+                Label("Choose a display or window", systemImage: "cursorarrow.click")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer()
 
                 Button {
                     Task {
@@ -3217,58 +3243,135 @@ private struct ReadyScreenColumn: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Image(systemName: "arrow.clockwise")
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
-                .buttonStyle(.borderless)
                 .disabled(coordinator.isLoadingCaptureTargets)
                 .help("Refresh screens and windows")
-                .accessibilityLabel("Refresh screens and windows")
             }
-        }
-    }
 
-    private var screenTargetDetail: String {
-        if coordinator.isLoadingCaptureTargets {
-            return "Finding screens and windows…"
+            ReadyCaptureTargetSelector()
+                .environmentObject(coordinator)
         }
-        if let selectedTarget = coordinator.selectedCaptureTarget {
-            return selectedTarget.subtitle
-        }
-        return "No capture target available"
     }
 }
 
-private struct ReadyScreenPreview: View {
+private struct ReadyCaptureTargetSelector: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black.opacity(0.24))
-
-            if let image = coordinator.previewImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .accessibilityLabel("Live screen preview")
-            } else if coordinator.isSetupPreviewStarting {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Starting screen preview")
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "display")
-                        .font(.title2)
-                    Text("Waiting for screen")
-                        .font(.caption)
+        Group {
+            if coordinator.isLoadingCaptureTargets {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading displays and windows")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+            } else if coordinator.captureTargets.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "display.slash")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("No displays or windows available")
+                        .font(.callout.weight(.medium))
+                    Text("Enable Screen Recording permission, then refresh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+                .background(.black.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(coordinator.captureTargets) { target in
+                            let isSelected = target.id == coordinator.selectedCaptureTarget?.id
+
+                            Button {
+                                Task {
+                                    await coordinator.selectCaptureTarget(target)
+                                }
+                            } label: {
+                                CaptureTargetCard(
+                                    target: target,
+                                    actionTitle: isSelected ? "Selected" : "Select",
+                                    actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
+                                    isSelected: isSelected
+                                )
+                                .frame(width: 238)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(target.title), \(target.subtitle)")
+                            .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                            .accessibilityHint("Select this capture target")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(height: 236)
             }
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct ReadyAudioSourceCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+    let toggleTitle: String
+    @Binding var isOn: Bool
+    var isAvailable = true
+    let content: Content
+
+    init(
+        title: String,
+        systemImage: String,
+        accentColor: Color,
+        toggleTitle: String,
+        isOn: Binding<Bool>,
+        isAvailable: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.accentColor = accentColor
+        self.toggleTitle = toggleTitle
+        _isOn = isOn
+        self.isAvailable = isAvailable
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 30, height: 30)
+                    .background(accentColor.opacity(0.12), in: Circle())
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(.headline)
+
+                Spacer()
+
+                Toggle(toggleTitle, isOn: $isOn)
+                    .toggleStyle(.switch)
+                    .disabled(!isAvailable)
+            }
+
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.09), lineWidth: 1)
+        }
     }
 }
 
@@ -3294,7 +3397,7 @@ private struct ReadyAudioFeedback: View {
             }
             .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76)
             .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .animation(.easeOut(duration: 0.08), value: level)
+            .animation(.interactiveSpring(response: 0.12, dampingFraction: 0.54), value: level)
 
             Text(isEnabled ? listeningText : "Source off")
                 .font(.caption)
@@ -3310,7 +3413,7 @@ private struct ReadyAudioFeedback: View {
         guard isEnabled else {
             return 4
         }
-        let visibleLevel = max(0.035, min(1, level * 2.6))
+        let visibleLevel = max(0.035, min(1, level))
         return max(4, 68 * Self.barProfile[index] * visibleLevel)
     }
 }
@@ -4249,7 +4352,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 540, height: 480)
         case .splash:
-            return NSSize(width: 900, height: 600)
+            return NSSize(width: 900, height: 680)
         case .editor:
             return NSSize(width: 880, height: 620)
         case .onboarding:
@@ -4264,7 +4367,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 640, height: 540)
         case .splash:
-            return NSSize(width: 1060, height: 660)
+            return NSSize(width: 1120, height: 780)
         case .editor:
             return NSSize(width: 1120, height: 720)
         case .onboarding:
