@@ -96,7 +96,7 @@ Glimpse checks the branch-hosted update manifest at:
 https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/latest.json
 ```
 
-The app checks automatically about once per day and also exposes **Check for Updates...** in the app menu and Settings. Tag releases update `updates/latest.json` on the default branch so installed apps can discover the newest DMG.
+The app checks automatically about once per day and also exposes **Check for Updates...** in the app menu and Settings. Tag releases update `updates/latest.json` on `main` so installed apps can discover the newest DMG.
 
 ## Privacy
 
