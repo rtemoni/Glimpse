@@ -4,6 +4,7 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
+import GlimpseCore
 import ScreenCaptureKit
 
 struct CapturedVideoFrame: @unchecked Sendable {
@@ -26,8 +27,8 @@ enum ScreenCaptureTarget: Identifiable {
 
     var title: String {
         switch self {
-        case .display(let display):
-            return "Display \(display.displayID)"
+        case .display:
+            return "Entire Screen"
         case .window(let window):
             return window.title?.isEmpty == false ? window.title ?? "Untitled Window" : "Untitled Window"
         }
@@ -96,16 +97,24 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
             onScreenWindowsOnly: true
         )
         let ownBundleID = Bundle.main.bundleIdentifier
-        let displays = content.displays.map { ScreenCaptureTarget.display($0) }
+        let backstopDisplayID = CaptureTargetCatalog.backstopDisplayID(
+            availableDisplayIDs: content.displays.map(\.displayID),
+            mainDisplayID: CGMainDisplayID()
+        )
+        let displays = content.displays
+            .filter { $0.displayID == backstopDisplayID }
+            .map { ScreenCaptureTarget.display($0) }
         let windows = content.windows
             .filter { window in
-                guard let bundleID = window.owningApplication?.bundleIdentifier else {
-                    return true
-                }
-                return bundleID != ownBundleID
-            }
-            .filter { window in
-                window.frame.width >= 80 && window.frame.height >= 80
+                CaptureTargetCatalog.shouldIncludeWindow(
+                    ownerBundleIdentifier: window.owningApplication?.bundleIdentifier,
+                    ownerApplicationName: window.owningApplication?.applicationName,
+                    title: window.title,
+                    width: window.frame.width,
+                    height: window.frame.height,
+                    isOnScreen: window.isOnScreen,
+                    ownBundleIdentifier: ownBundleID
+                )
             }
             .map { ScreenCaptureTarget.window($0) }
 
