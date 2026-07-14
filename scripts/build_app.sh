@@ -124,7 +124,8 @@ fi
 
 if [[ "$RESET_SCREEN_CAPTURE_TCC" == "1" ]]; then
     echo "Resetting ScreenCapture TCC permission for $BUNDLE_IDENTIFIER..."
-    tccutil reset ScreenCapture "$BUNDLE_IDENTIFIER"
+    tccutil reset ScreenCapture "$BUNDLE_IDENTIFIER" \
+        || echo "ScreenCapture TCC reset skipped for $BUNDLE_IDENTIFIER."
 fi
 
 echo "$APP_DIR"

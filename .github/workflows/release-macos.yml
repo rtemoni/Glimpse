@@ -90,6 +90,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
+          RESET_SCREEN_CAPTURE_TCC: "0"
         run: scripts/build_app.sh
 
       - name: Create DMG
