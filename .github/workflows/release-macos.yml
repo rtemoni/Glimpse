@@ -22,7 +22,7 @@ jobs:
     env:
       APP_NAME: Glimpse
       PRODUCT_NAME: Glimpse
-      BUNDLE_IDENTIFIER: ${{ vars.BUNDLE_IDENTIFIER || 'com.example.Glimpse' }}
+      BUNDLE_IDENTIFIER: ${{ vars.BUNDLE_IDENTIFIER || 'com.rtemoni.Glimpse' }}
       SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -103,6 +103,10 @@ jobs:
             -k "$keychain_password" \
             "$keychain_path"
 
+      - name: Run tests
+        shell: bash
+        run: swift test
+
       - name: Build app bundle
         shell: bash
         env:
@@ -145,3 +149,43 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --generate-notes
           gh release upload "$tag" "$dmg_path" --clobber
+
+      - name: Publish update manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          tag="$GITHUB_REF_NAME"
+          default_branch="${{ github.event.repository.default_branch }}"
+          release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/Glimpse-$version.dmg"
+
+          git fetch origin "$default_branch"
+          git switch "$default_branch"
+          git pull --ff-only origin "$default_branch"
+
+          mkdir -p updates
+          cat > updates/latest.json <<JSON
+          {
+            "version": "$version",
+            "build": "${{ github.run_number }}",
+            "tag": "$tag",
+            "releaseDate": "$(date -u +%F)",
+            "minimumSystemVersion": "13.0",
+            "downloadURL": "$download_url",
+            "releaseNotesURL": "$release_url",
+            "branch": "$default_branch"
+          }
+          JSON
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          if git diff --cached --quiet; then
+            echo "Update manifest is already current."
+          else
+            git commit -m "Update release manifest for $tag"
+            git push origin "$default_branch"
+          fi

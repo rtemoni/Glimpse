@@ -25,6 +25,14 @@ struct GlimpseApp: App {
         .defaultSize(width: 400, height: 240)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    Task {
+                        await coordinator.checkForUpdates(userInitiated: true)
+                    }
+                }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+            }
         }
     }
 

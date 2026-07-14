@@ -42,11 +42,13 @@ struct ContentView: View {
         .onAppear {
             coordinator.refreshDevices()
             coordinator.startPermissionMonitoring()
+            coordinator.checkForUpdatesIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             coordinator.refreshPermissionStatuses()
             coordinator.refreshDevices()
             coordinator.startPermissionMonitoring()
+            coordinator.checkForUpdatesIfNeeded()
         }
         .alert("Recording Error", isPresented: coordinator.hasErrorBinding) {
             Button("OK", role: .cancel) {
@@ -55,10 +57,34 @@ struct ContentView: View {
         } message: {
             Text(coordinator.errorMessage ?? "")
         }
+        .alert(item: $coordinator.updateAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                primaryButton: updatePrimaryButton(for: alert),
+                secondaryButton: .cancel()
+            )
+        }
         .sheet(isPresented: $coordinator.isCaptureTargetPickerPresented) {
             CaptureTargetPickerSheet()
                 .environmentObject(coordinator)
         }
+    }
+
+    private func updatePrimaryButton(for alert: UpdateAlert) -> Alert.Button {
+        if let downloadURL = alert.downloadURL {
+            return .default(Text("Download")) {
+                coordinator.openUpdateDownload(downloadURL)
+            }
+        }
+
+        if let releaseNotesURL = alert.releaseNotesURL {
+            return .default(Text("View Release")) {
+                coordinator.openUpdateDownload(releaseNotesURL)
+            }
+        }
+
+        return .default(Text("OK"))
     }
 
     private var windowPresentationMode: WindowPresentationMode {
@@ -3875,6 +3901,10 @@ private struct SettingsPane: View {
 
                 OverlaySettingsView()
                     .environmentObject(coordinator)
+                Divider()
+
+                ReleaseSettingsView()
+                    .environmentObject(coordinator)
             }
             .padding(18)
         }
@@ -4009,6 +4039,43 @@ private struct OverlaySettingsView: View {
                 Text("Corner Radius")
             }
             .disabled(coordinator.settings.overlay.shape == .circle)
+        }
+    }
+}
+
+private struct ReleaseSettingsView: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Release")
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                Label("Version \(coordinator.appVersion)", systemImage: "shippingbox")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button {
+                    Task {
+                        await coordinator.checkForUpdates(userInitiated: true)
+                    }
+                } label: {
+                    if coordinator.isCheckingForUpdates {
+                        Label("Checking", systemImage: "arrow.triangle.2.circlepath")
+                    } else {
+                        Label("Check", systemImage: "arrow.down.circle")
+                    }
+                }
+                .disabled(coordinator.isCheckingForUpdates)
+            }
+
+            if let status = coordinator.updateStatusMessage {
+                Label(status, systemImage: "sparkle.magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

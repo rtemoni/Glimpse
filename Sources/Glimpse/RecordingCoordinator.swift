@@ -5,6 +5,14 @@ import CoreGraphics
 import GlimpseCore
 import SwiftUI
 
+struct UpdateAlert: Identifiable {
+    let id = UUID()
+    var title: String
+    var message: String
+    var downloadURL: URL?
+    var releaseNotesURL: URL?
+}
+
 @MainActor
 final class RecordingCoordinator: ObservableObject {
     @Published var state: RecordingState = .idle
@@ -31,6 +39,9 @@ final class RecordingCoordinator: ObservableObject {
     @Published private(set) var captureTargets: [ScreenCaptureTarget] = []
     @Published private(set) var isLoadingCaptureTargets = false
     @Published private(set) var selectedCaptureTarget: ScreenCaptureTarget?
+    @Published private(set) var isCheckingForUpdates = false
+    @Published private(set) var updateStatusMessage: String?
+    @Published var updateAlert: UpdateAlert?
 
     private var stateMachine = RecordingStateMachine()
     private let screenCapture = ScreenCaptureService()
@@ -39,12 +50,14 @@ final class RecordingCoordinator: ObservableObject {
     private let compositor = VideoCompositor()
     private let muxer = Muxer()
     private let videoExporter = VideoExporter()
+    private let updateChecker = GitHubUpdateChecker()
     private var elapsedTimer: Timer?
     private var permissionTimer: Timer?
     private var recordingStartedAt: Date?
     private var lastOutputURL: URL?
     private var activeSourceSet = RecordingSourceSet(camera: false, microphone: false, systemAudio: false)
     private var activeCaptureTargetKind: RecordingCaptureTargetKind = .display
+    private let lastAutomaticUpdateCheckKey = "Glimpse.lastAutomaticUpdateCheck"
 
     init() {
         isSystemAudioAvailable = AudioCaptureService.isSystemAudioCaptureSupported
@@ -101,6 +114,10 @@ final class RecordingCoordinator: ObservableObject {
         return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 
+    var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+
     var hasErrorBinding: Binding<Bool> {
         Binding(
             get: { self.errorMessage != nil },
@@ -131,6 +148,67 @@ final class RecordingCoordinator: ObservableObject {
 
     func openOutputDirectory() {
         NSWorkspace.shared.open(settings.outputDirectory)
+    }
+
+    func checkForUpdatesIfNeeded() {
+        let defaults = UserDefaults.standard
+        let lastCheck = defaults.object(forKey: lastAutomaticUpdateCheckKey) as? Date ?? .distantPast
+        guard Date().timeIntervalSince(lastCheck) > 24 * 60 * 60 else {
+            return
+        }
+
+        defaults.set(Date(), forKey: lastAutomaticUpdateCheckKey)
+        Task {
+            await checkForUpdates(userInitiated: false)
+        }
+    }
+
+    func checkForUpdates(userInitiated: Bool) async {
+        guard !isCheckingForUpdates else {
+            return
+        }
+
+        isCheckingForUpdates = true
+        if userInitiated {
+            updateStatusMessage = "Checking for updates..."
+        }
+
+        do {
+            let result = try await updateChecker.check(currentVersion: appVersion)
+            if result.isUpdateAvailable {
+                updateStatusMessage = "Glimpse \(result.manifest.version) is available."
+                updateAlert = UpdateAlert(
+                    title: "Glimpse \(result.manifest.version) is available",
+                    message: "You are running \(result.currentVersion). Download the latest release from GitHub.",
+                    downloadURL: result.manifest.downloadURL,
+                    releaseNotesURL: result.manifest.releaseNotesURL
+                )
+            } else if userInitiated {
+                updateStatusMessage = "Glimpse is up to date."
+                updateAlert = UpdateAlert(
+                    title: "Glimpse is up to date",
+                    message: "You are running the latest release, version \(result.currentVersion).",
+                    downloadURL: nil,
+                    releaseNotesURL: result.manifest.releaseNotesURL
+                )
+            }
+        } catch {
+            if userInitiated {
+                updateStatusMessage = "Unable to check for updates."
+                updateAlert = UpdateAlert(
+                    title: "Unable to Check for Updates",
+                    message: readableError(error),
+                    downloadURL: nil,
+                    releaseNotesURL: nil
+                )
+            }
+        }
+
+        isCheckingForUpdates = false
+    }
+
+    func openUpdateDownload(_ url: URL) {
+        NSWorkspace.shared.open(url)
     }
 
     func startPermissionMonitoring() {

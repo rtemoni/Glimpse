@@ -6,12 +6,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 APP_NAME="${APP_NAME:-Glimpse}"
 PRODUCT_NAME="${PRODUCT_NAME:-Glimpse}"
-BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-com.example.Glimpse}"
+BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-com.rtemoni.Glimpse}"
 CONFIGURATION="${CONFIGURATION:-release}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/.build/distribution}"
 INFO_PLIST_SOURCE="${INFO_PLIST_SOURCE:-$REPO_ROOT/Info.plist}"
-ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$REPO_ROOT/Signing/Glimpse.entitlements}"
+ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$REPO_ROOT/Signing/ScreenCamRecorder.entitlements}"
 ICON_SOURCE_DIR="${ICON_SOURCE_DIR:-$REPO_ROOT/Sources/Glimpse/Resources/Assets.xcassets/AppIcon.appiconset}"
+ICON_SOURCE_ICNS="${ICON_SOURCE_ICNS:-$REPO_ROOT/Sources/Glimpse/Resources/AppIcon.icns}"
 RESOURCE_BUNDLE_NAME="${RESOURCE_BUNDLE_NAME:-Glimpse_Glimpse.bundle}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-13.0}"
 SKIP_CODESIGN="${SKIP_CODESIGN:-0}"
@@ -87,7 +88,9 @@ plist_set_bool "NSHighResolutionCapable" "true"
 
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
-if [[ -d "$ICON_SOURCE_DIR" ]]; then
+if [[ -f "$ICON_SOURCE_ICNS" ]]; then
+    cp "$ICON_SOURCE_ICNS" "$RESOURCES_DIR/AppIcon.icns"
+elif [[ -d "$ICON_SOURCE_DIR" ]]; then
     TMP_ICONSET="$OUTPUT_DIR/AppIcon.iconset"
     rm -rf "$TMP_ICONSET"
     mkdir -p "$TMP_ICONSET"

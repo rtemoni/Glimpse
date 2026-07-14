@@ -44,7 +44,7 @@ SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/build_ap
 
 Without `SIGNING_IDENTITY`, the script applies an ad-hoc local signature so the bundle can still be inspected and tested locally.
 
-`scripts/create_dmg.sh` creates `.build/distribution/Glimpse-<version>.dmg` containing the app bundle and an alias to `/Applications`:
+`scripts/create_dmg.sh` creates `.build/distribution/Glimpse-<version>.dmg` with a drag-and-drop installer layout:
 
 ```sh
 VERSION=0.1.0 SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/create_dmg.sh
@@ -65,6 +65,13 @@ scripts/create_dmg.sh
 
 `.github/workflows/release-macos.yml` builds, signs, notarizes, staples, uploads the DMG artifact, and attaches it to a GitHub Release when a `v*` tag is pushed.
 
+Cut the initial release from `main` with:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 Required secrets for tag releases:
 
 - `DEVELOPER_ID_APPLICATION_P12_BASE64`
@@ -78,6 +85,16 @@ Optional:
 
 - `KEYCHAIN_PASSWORD`
 - Repository variable `BUNDLE_IDENTIFIER`
+
+## Updates
+
+Glimpse checks the branch-hosted update manifest at:
+
+```text
+https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/latest.json
+```
+
+The app checks automatically about once per day and also exposes **Check for Updates...** in the app menu and Settings. Tag releases update `updates/latest.json` on the default branch so installed apps can discover the newest DMG.
 
 ## Privacy
 
