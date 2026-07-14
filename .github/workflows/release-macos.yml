@@ -23,6 +23,7 @@ jobs:
       APP_NAME: Glimpse
       PRODUCT_NAME: Glimpse
       BUNDLE_IDENTIFIER: ${{ vars.BUNDLE_IDENTIFIER || 'com.rtemoni.Glimpse' }}
+      RELEASE_BRANCH: main
       SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -46,29 +47,6 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Packaging version $version"
-
-      - name: Require release signing secrets
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        env:
-          DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
-          DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
-        run: |
-          missing=0
-          for name in \
-            DEVELOPER_ID_APPLICATION_P12_BASE64 \
-            DEVELOPER_ID_APPLICATION_P12_PASSWORD \
-            SIGNING_IDENTITY \
-            APPLE_ID \
-            APPLE_TEAM_ID \
-            APPLE_APP_SPECIFIC_PASSWORD
-          do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::$name is required for tag releases"
-              missing=1
-            fi
-          done
-          exit "$missing"
 
       - name: Import Developer ID certificate
         shell: bash
@@ -158,13 +136,13 @@ jobs:
         run: |
           version="${{ steps.version.outputs.version }}"
           tag="$GITHUB_REF_NAME"
-          default_branch="${{ github.event.repository.default_branch }}"
+          release_branch="$RELEASE_BRANCH"
           release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"
           download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/Glimpse-$version.dmg"
 
-          git fetch origin "$default_branch"
-          git switch "$default_branch"
-          git pull --ff-only origin "$default_branch"
+          git fetch origin "$release_branch"
+          git switch "$release_branch"
+          git pull --ff-only origin "$release_branch"
 
           mkdir -p updates
           cat > updates/latest.json <<JSON
@@ -176,7 +154,7 @@ jobs:
             "minimumSystemVersion": "13.0",
             "downloadURL": "$download_url",
             "releaseNotesURL": "$release_url",
-            "branch": "$default_branch"
+            "branch": "$release_branch"
           }
           JSON
 
@@ -187,5 +165,5 @@ jobs:
             echo "Update manifest is already current."
           else
             git commit -m "Update release manifest for $tag"
-            git push origin "$default_branch"
+            git push origin "$release_branch"
           fi

@@ -72,7 +72,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Required secrets for tag releases:
+Optional secrets for signed and notarized tag releases:
 
 - `DEVELOPER_ID_APPLICATION_P12_BASE64`
 - `DEVELOPER_ID_APPLICATION_P12_PASSWORD`
@@ -85,6 +85,8 @@ Optional:
 
 - `KEYCHAIN_PASSWORD`
 - Repository variable `BUNDLE_IDENTIFIER`
+
+If signing secrets are not configured, the workflow still publishes an ad-hoc signed DMG so early GitHub Releases can be tested.
 
 ## Updates
 
