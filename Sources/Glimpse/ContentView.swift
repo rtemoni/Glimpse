@@ -2941,6 +2941,18 @@ private struct CompactIdleView: View {
                 coordinator.chooseOutputDirectory()
             }
 
+            HStack(spacing: 6) {
+                Text("Name prefix")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                TextField("screen-recording", text: $coordinator.settings.fileNamePrefix)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 156)
+                    .accessibilityLabel("Recording file name prefix")
+                    .accessibilityHint("The recording date and time are added automatically")
+            }
+
             Spacer()
 
             Button {
