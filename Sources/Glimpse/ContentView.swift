@@ -3214,11 +3214,7 @@ private struct GlimpseStartIconView: View {
     }
 
     private static var packageImage: NSImage? {
-        guard let url = Bundle.module.url(forResource: "GlimpseStartIcon", withExtension: "png") else {
-            return nil
-        }
-
-        return NSImage(contentsOf: url)
+        AppResources.image(named: "GlimpseStartIcon", withExtension: "png")
     }
 }
 

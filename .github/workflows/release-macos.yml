@@ -93,6 +93,9 @@ jobs:
           RESET_SCREEN_CAPTURE_TCC: "0"
         run: scripts/build_app.sh
 
+      - name: Smoke test packaged app
+        run: scripts/smoke_test_app.sh ".build/distribution/Glimpse.app"
+
       - name: Create DMG
         id: dmg
         shell: bash

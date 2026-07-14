@@ -55,12 +55,20 @@ cat > "$LAYOUT_SCRIPT" <<APPLESCRIPT
 set dmgFolder to POSIX file "$MOUNT_DIR" as alias
 tell application "Finder"
     open dmgFolder
-    set current view of container window of dmgFolder to icon view
-    set toolbar visible of container window of dmgFolder to false
-    set statusbar visible of container window of dmgFolder to false
-    set pathbar visible of container window of dmgFolder to false
-    set bounds of container window of dmgFolder to {100, 100, 740, 500}
-    set theViewOptions to the icon view options of container window of dmgFolder
+    delay 1
+    set dmgWindow to container window of dmgFolder
+    set current view of dmgWindow to icon view
+    try
+        set toolbar visible of dmgWindow to false
+    end try
+    try
+        set statusbar visible of dmgWindow to false
+    end try
+    try
+        set pathbar visible of dmgWindow to false
+    end try
+    set bounds of dmgWindow to {100, 100, 740, 500}
+    set theViewOptions to the icon view options of dmgWindow
     set arrangement of theViewOptions to not arranged
     set icon size of theViewOptions to 80
     set text size of theViewOptions to 14
@@ -69,7 +77,9 @@ tell application "Finder"
     set position of item "Applications" of dmgFolder to {460, 190}
     update dmgFolder without registering applications
     delay 1
-    close container window of dmgFolder
+    try
+        close container window of dmgFolder
+    end try
 end tell
 APPLESCRIPT
 

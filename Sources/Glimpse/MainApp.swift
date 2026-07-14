@@ -37,10 +37,7 @@ struct GlimpseApp: App {
     }
 
     private static func appIconImage() -> NSImage? {
-        if let bundledIconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") {
-            return NSImage(contentsOf: bundledIconURL)
-        }
-        return Bundle.module.image(forResource: "AppIcon")
+        AppResources.image(named: "AppIcon", withExtension: "icns")
     }
 }
 #endif
