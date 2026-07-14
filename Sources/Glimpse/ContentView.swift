@@ -110,7 +110,7 @@ private struct RecorderWorkspace: View {
         ZStack {
             LiquidGlassBackdrop()
 
-            HSplitView {
+            if showsActiveRecordingControls {
                 VStack(spacing: 12) {
                     RecordingStatusPane()
                         .environmentObject(coordinator)
@@ -119,18 +119,75 @@ private struct RecorderWorkspace: View {
                         .aspectRatio(16.0 / 10.0, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                    ControlBar()
+                    ActiveRecordingControls()
                         .environmentObject(coordinator)
                 }
                 .padding(12)
-                .frame(minWidth: 320)
+                .frame(maxWidth: 780)
+            } else {
+                HSplitView {
+                    VStack(spacing: 12) {
+                        RecordingStatusPane()
+                            .environmentObject(coordinator)
+                            .padding(10)
+                            .liquidGlassSurface(cornerRadius: 24)
+                            .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                SettingsPane()
-                    .environmentObject(coordinator)
-                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
+                        ControlBar()
+                            .environmentObject(coordinator)
+                    }
+                    .padding(12)
+                    .frame(minWidth: 320)
+
+                    SettingsPane()
+                        .environmentObject(coordinator)
+                        .frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
+                }
             }
         }
         .frame(minWidth: 560, minHeight: 360)
+    }
+
+    private var showsActiveRecordingControls: Bool {
+        coordinator.state == .recording
+            || coordinator.state == .paused
+            || coordinator.state == .stopping
+    }
+}
+
+private enum EditorWorkspaceTab: String, CaseIterable, Identifiable {
+    case timeline
+    case recording
+    case frame
+    case export
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .timeline:
+            return "Timeline"
+        case .recording:
+            return "Recording"
+        case .frame:
+            return "Frame"
+        case .export:
+            return "Export"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .timeline:
+            return "timeline.selection"
+        case .recording:
+            return "info.circle"
+        case .frame:
+            return "rectangle.inset.filled"
+        case .export:
+            return "slider.horizontal.3"
+        }
     }
 }
 
@@ -151,27 +208,35 @@ private struct EditorWorkspace: View {
     @State private var isSkippingPlaybackGap = false
     @State private var thumbnails: [TimelineThumbnail] = []
     @State private var waveformSamples: [TimelineWaveformSample] = []
-    @State private var sidebarPreviewImage: NSImage?
-    @State private var sidebarPreviewRequest = 0
-    @State private var lastSidebarPreviewTime: Double = -1
+    @State private var aspectPreviewImage: NSImage?
+    @State private var aspectPreviewRequest = 0
+    @State private var lastAspectPreviewTime: Double = -1
+    @State private var selectedWorkspaceTab: EditorWorkspaceTab = .timeline
 
     var body: some View {
         ZStack {
             LiquidGlassBackdrop()
 
             if let session = coordinator.editingSession {
-                HSplitView {
-                    VStack(spacing: 8) {
+                VStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
                         FramedVideoPreview(
                             player: player,
                             sourceAspectRatio: videoAspectRatio,
                             settings: coordinator.exportSettings.framedCapture,
                             roundsForeground: summary.captureTargetKind == .window
                         )
-                            .previewSurface(cornerRadius: 24)
-                            .frame(minWidth: 420, maxWidth: .infinity, alignment: .top)
-                            .layoutPriority(1)
+                        .postRecordingPreviewSurface()
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .accessibilityLabel("Recording preview")
 
+                        EditorAspectPreviewGrid(summary: summary, previewImage: aspectPreviewImage)
+                            .frame(width: 220)
+                    }
+                    .frame(maxHeight: 380)
+                    .layoutPriority(1)
+
+                    TabView(selection: $selectedWorkspaceTab) {
                         TimelineEditorView(
                             session: session,
                             duration: summary.duration,
@@ -193,17 +258,38 @@ private struct EditorWorkspace: View {
                             splitAtPlayhead: splitAtPlayhead,
                             canUndo: canUndo
                         )
-                        .liquidGlassSurface(cornerRadius: 24)
-                    }
-                    .padding(.leading, 12)
-                    .padding(.vertical, 12)
+                        .tag(EditorWorkspaceTab.timeline)
+                        .tabItem {
+                            Label(EditorWorkspaceTab.timeline.title, systemImage: EditorWorkspaceTab.timeline.systemImage)
+                        }
 
-                    ExportPanel(summary: summary, session: session, previewImage: sidebarPreviewImage)
+                        EditorRecordingPanel(summary: summary, session: session)
+                            .environmentObject(coordinator)
+                            .tag(EditorWorkspaceTab.recording)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.recording.title, systemImage: EditorWorkspaceTab.recording.systemImage)
+                            }
+
+                        FramedCaptureControls(settings: $coordinator.exportSettings.framedCapture)
+                            .tag(EditorWorkspaceTab.frame)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.frame.title, systemImage: EditorWorkspaceTab.frame.systemImage)
+                            }
+
+                        EditorExportSettingsPanel()
+                            .environmentObject(coordinator)
+                            .tag(EditorWorkspaceTab.export)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.export.title, systemImage: EditorWorkspaceTab.export.systemImage)
+                            }
+                    }
+                    .liquidGlassSurface(cornerRadius: 24)
+                    .frame(minHeight: 210, idealHeight: 225, maxHeight: 245)
+
+                    EditorExportBar(summary: summary)
                         .environmentObject(coordinator)
-                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
-                        .padding(.trailing, 12)
-                        .padding(.vertical, 12)
                 }
+                .padding(12)
             }
         }
         .frame(minWidth: 880, minHeight: 620)
@@ -217,7 +303,7 @@ private struct EditorWorkspace: View {
             }
             loadThumbnails()
             loadWaveform()
-            loadSidebarPreview(force: true)
+            loadAspectPreview(force: true)
         }
         .onDisappear {
             player.pause()
@@ -485,7 +571,7 @@ private struct EditorWorkspace: View {
         currentTime = clamped
         player.pause()
         applyPreviewAudioMute(at: clamped)
-        loadSidebarPreview(time: clamped, force: true)
+        loadAspectPreview(time: clamped, force: true)
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -592,7 +678,7 @@ private struct EditorWorkspace: View {
         } else {
             currentTime = seconds
             applyPreviewAudioMute(at: seconds)
-            loadSidebarPreview(time: seconds)
+            loadAspectPreview(time: seconds)
         }
     }
 
@@ -600,7 +686,7 @@ private struct EditorWorkspace: View {
         let clamped = min(max(seconds, 0), max(summary.duration, 0))
         currentTime = clamped
         applyPreviewAudioMute(at: clamped)
-        loadSidebarPreview(time: clamped, force: true)
+        loadAspectPreview(time: clamped, force: true)
         isSkippingPlaybackGap = true
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
@@ -732,14 +818,14 @@ private struct EditorWorkspace: View {
         }
     }
 
-    private func loadSidebarPreview(time: Double? = nil, force: Bool = false) {
+    private func loadAspectPreview(time: Double? = nil, force: Bool = false) {
         let targetTime = min(max(time ?? currentTime, 0), max(summary.duration, 0))
-        guard force || abs(targetTime - lastSidebarPreviewTime) >= 0.12 else {
+        guard force || abs(targetTime - lastAspectPreviewTime) >= 0.12 else {
             return
         }
-        lastSidebarPreviewTime = targetTime
-        sidebarPreviewRequest += 1
-        let request = sidebarPreviewRequest
+        lastAspectPreviewTime = targetTime
+        aspectPreviewRequest += 1
+        let request = aspectPreviewRequest
         let url = summary.sourceURL
         Task {
             let frame = await Task.detached {
@@ -751,8 +837,8 @@ private struct EditorWorkspace: View {
                     )
                 )
             }.value
-            if request == sidebarPreviewRequest {
-                sidebarPreviewImage = frame.image
+            if request == aspectPreviewRequest {
+                aspectPreviewImage = frame.image
             }
         }
     }
@@ -1808,7 +1894,7 @@ private struct TimelineClipBlock: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipped()
 
             LinearGradient(
                 colors: [
@@ -1819,13 +1905,13 @@ private struct TimelineClipBlock: View {
                 endPoint: .bottom
             )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipped()
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            Rectangle()
                 .fill(Color.black.opacity(0.20))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            Rectangle()
                 .strokeBorder(
                     isSelected ? (isFocused ? Color.accentColor : Color.white.opacity(0.74)) : Color.white.opacity(0.36),
                     lineWidth: isSelected ? 2 : 1
@@ -1939,72 +2025,91 @@ private struct TimelineThumbnailCard: View {
     }
 }
 
-private struct ExportPanel: View {
+private struct EditorRecordingPanel: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
     let summary: RecordingSummary
     let session: EditingSession
-    let previewImage: NSImage?
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 16) {
-                SidebarAspectPreviewGrid(summary: summary, previewImage: previewImage)
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Edit Recording")
+                    .font(.title3.weight(.semibold))
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Edit Recording")
-                        .font(.title3.weight(.semibold))
+                Text(summary.sourceURL.lastPathComponent)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
 
-                    Text(summary.sourceURL.lastPathComponent)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-
-                    if let status = coordinator.statusMessage {
-                        StatusPill(
-                            text: status,
-                            systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
-                        )
-                    }
+                if let status = coordinator.statusMessage {
+                    StatusPill(
+                        text: status,
+                        systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
+                    )
                 }
+            }
+            .frame(minWidth: 190, maxWidth: 280, alignment: .leading)
 
-                VStack(spacing: 8) {
-                    Button {
-                        coordinator.revealInFinder(summary.sourceURL)
-                    } label: {
-                        Label("Reveal Master", systemImage: "folder")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                    }
+            Divider()
 
-                    Button {
-                        coordinator.recordAgain()
-                    } label: {
-                        Label("Record Again", systemImage: "record.circle")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 28) {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                     infoRow("Clips", "\(session.clipRanges.count)")
                     infoRow("Export", formatTime(exportDuration))
-                    infoRow("Master", summary.sourceURL.lastPathComponent)
                     infoRow("Duration", formatTime(summary.duration))
                     infoRow("Size", formatFileSize(summary.fileSizeBytes))
-                    infoRow("Frame", "\(Int(summary.videoSize.width)) x \(Int(summary.videoSize.height))")
-                    infoRow("Sources", sourceSummary(summary.sources))
                 }
 
-                Divider()
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+                    infoRow("Frame", "\(Int(summary.videoSize.width)) x \(Int(summary.videoSize.height))")
+                    infoRow("Sources", sourceSummary(summary.sources))
+                    infoRow("Master", summary.sourceURL.lastPathComponent)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
-                FramedCaptureControls(settings: $coordinator.exportSettings.framedCapture)
+    private var exportDuration: Double {
+        session.keptRanges.reduce(0) { $0 + $1.duration }
+    }
 
-                Divider()
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        GridRow {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+        .font(.callout)
+    }
 
-                Text("Export")
+    private func sourceSummary(_ sources: RecordingSourceSet) -> String {
+        var parts: [String] = []
+        if sources.camera {
+            parts.append("Camera")
+        }
+        if sources.microphone {
+            parts.append("Mic")
+        }
+        if sources.systemAudio {
+            parts.append("System")
+        }
+        return parts.isEmpty ? "Screen only" : parts.joined(separator: ", ")
+    }
+}
+
+private struct EditorExportSettingsPanel: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Export Settings")
                     .font(.headline)
 
                 ExportAspectPresetPicker(settings: $coordinator.exportSettings)
@@ -2032,94 +2137,139 @@ private struct ExportPanel: View {
                         .frame(width: 74)
                     }
                 }
+            }
+            .frame(minWidth: 230, maxWidth: 320, alignment: .leading)
 
-                Button {
-                    Task {
-                        await coordinator.exportEditedRecording()
-                    }
-                } label: {
-                    Label(coordinator.isExporting ? "Exporting" : "Export Edited Video", systemImage: "square.and.arrow.up")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(coordinator.isExporting || coordinator.editingSession?.keptRanges.isEmpty == true)
+            Divider()
 
-                if coordinator.isExporting {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ProgressView(value: coordinator.exportProgress)
-                            .progressViewStyle(.linear)
-                        Text("\(Int((coordinator.exportProgress * 100).rounded()))%")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            exportStatus
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
-                if !coordinator.exportedVideos.isEmpty {
-                    Divider()
-                    Text(coordinator.exportedVideos.count == 1 ? "Export complete" : "Exports complete")
-                        .font(.headline)
+    @ViewBuilder
+    private var exportStatus: some View {
+        if coordinator.isExporting {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Exporting Video")
+                    .font(.headline)
+                ProgressView(value: coordinator.exportProgress)
+                    .progressViewStyle(.linear)
+                Text("\(Int((coordinator.exportProgress * 100).rounded()))% complete")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        } else if coordinator.exportedVideos.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Ready to Export")
+                    .font(.headline)
+                Text("Choose the formats here, then use Export Video at the bottom right.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(coordinator.exportedVideos.count == 1 ? "Export Complete" : "Exports Complete")
+                    .font(.headline)
 
+                HStack(alignment: .top, spacing: 10) {
                     ForEach(coordinator.exportedVideos) { exportedVideo in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("\(exportedVideo.preset.displayName) \(exportedVideo.preset.description)")
-                                .font(.callout.weight(.semibold))
-
-                            HStack(spacing: 8) {
-                                Button {
-                                    coordinator.openFile(exportedVideo.url)
-                                } label: {
-                                    Label("Open", systemImage: "play.rectangle")
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity)
-                                }
-                                Button {
-                                    coordinator.revealInFinder(exportedVideo.url)
-                                } label: {
-                                    Label("Reveal", systemImage: "folder")
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity)
-                                }
-                            }
-                        }
+                        EditorExportResultCard(exportedVideo: exportedVideo)
+                            .environmentObject(coordinator)
                     }
                 }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .liquidGlassSurface(cornerRadius: 24)
     }
+}
 
-    private var exportDuration: Double {
-        session.keptRanges.reduce(0) { $0 + $1.duration }
+private struct EditorExportResultCard: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+    let exportedVideo: ExportedVideo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(exportedVideo.preset.displayName) \(exportedVideo.preset.description)")
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+
+            HStack(spacing: 6) {
+                Button {
+                    coordinator.openFile(exportedVideo.url)
+                } label: {
+                    Label("Open", systemImage: "play.rectangle")
+                        .lineLimit(1)
+                }
+                Button {
+                    coordinator.revealInFinder(exportedVideo.url)
+                } label: {
+                    Label("Reveal", systemImage: "folder")
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private func infoRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 62, alignment: .leading)
-            Text(value)
-                .lineLimit(2)
-                .truncationMode(.middle)
-        }
-        .font(.callout)
-    }
+private struct EditorExportBar: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+    let summary: RecordingSummary
 
-    private func sourceSummary(_ sources: RecordingSourceSet) -> String {
-        var parts: [String] = []
-        if sources.camera {
-            parts.append("Camera")
+    var body: some View {
+        HStack(spacing: 10) {
+            if let status = coordinator.statusMessage {
+                StatusPill(
+                    text: status,
+                    systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
+                )
+            }
+
+            if coordinator.isExporting {
+                ProgressView(value: coordinator.exportProgress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 120)
+                    .accessibilityLabel("Export progress")
+                    .accessibilityValue("\(Int((coordinator.exportProgress * 100).rounded())) percent")
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                coordinator.revealInFinder(summary.sourceURL)
+            } label: {
+                Label("Reveal Master", systemImage: "folder")
+            }
+
+            Button {
+                coordinator.recordAgain()
+            } label: {
+                Label("Record Again", systemImage: "record.circle")
+            }
+
+            Button {
+                Task {
+                    await coordinator.exportEditedRecording()
+                }
+            } label: {
+                Label(coordinator.isExporting ? "Exporting" : "Export Video", systemImage: "square.and.arrow.up")
+                    .lineLimit(1)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(coordinator.isExporting || coordinator.editingSession?.keptRanges.isEmpty == true)
+            .accessibilityLabel(coordinator.isExporting ? "Exporting video" : "Export video")
+            .accessibilityHint("Exports the edited recording using the selected export settings")
         }
-        if sources.microphone {
-            parts.append("Mic")
-        }
-        if sources.systemAudio {
-            parts.append("System")
-        }
-        return parts.isEmpty ? "Screen only" : parts.joined(separator: ", ")
+        .controlSize(.regular)
     }
 }
 
@@ -2217,46 +2367,82 @@ private struct FramedCaptureControls: View {
     @Binding var settings: FramedCaptureSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Background & Frame", isOn: $settings.isEnabled)
-                .font(.headline)
-
-            if settings.isEnabled {
-                Picker("Background", selection: $settings.background) {
-                    ForEach(FramedCaptureBackground.allCases) { background in
-                        Text(background.displayName).tag(background)
-                    }
-                }
-
-                backgroundControls
-
-                VStack(alignment: .leading, spacing: 5) {
-                    settingValueLabel("Padding", "\(Int(settings.padding))")
-                    Slider(value: $settings.padding, in: 0...180)
-                }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    settingValueLabel("Corner Radius", "\(Int(settings.cornerRadius))")
-                    Slider(value: $settings.cornerRadius, in: 0...48)
-                }
-
-                Picker("Shadow", selection: $settings.shadow) {
-                    ForEach(FramedCaptureShadow.allCases) { shadow in
-                        Text(shadow.displayName).tag(shadow)
-                    }
-                }
-
-                Picker("Alignment", selection: $settings.alignment) {
-                    ForEach(FramedCaptureAlignment.allCases) { alignment in
-                        Text(alignment.displayName).tag(alignment)
-                    }
-                }
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Background & Frame", isOn: $settings.isEnabled)
+                    .font(.headline)
 
                 Text("Applies only to the full 16:9 master.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 170, maxWidth: 220, alignment: .leading)
+
+            Divider()
+
+            if settings.isEnabled {
+                GroupBox("Background") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Style", selection: $settings.background) {
+                            ForEach(FramedCaptureBackground.allCases) { background in
+                                Text(background.displayName).tag(background)
+                            }
+                        }
+
+                        backgroundControls
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                GroupBox("Geometry") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            settingValueLabel("Padding", "\(Int(settings.padding))")
+                            Slider(value: $settings.padding, in: 0...180)
+                        }
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            settingValueLabel("Corner Radius", "\(Int(settings.cornerRadius))")
+                            Slider(value: $settings.cornerRadius, in: 0...48)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                GroupBox("Placement") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Shadow", selection: $settings.shadow) {
+                            ForEach(FramedCaptureShadow.allCases) { shadow in
+                                Text(shadow.displayName).tag(shadow)
+                            }
+                        }
+
+                        Picker("Alignment", selection: $settings.alignment) {
+                            ForEach(FramedCaptureAlignment.allCases) { alignment in
+                                Text(alignment.displayName).tag(alignment)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "rectangle.inset.filled")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("Enable Background & Frame to configure the exported 16:9 master.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -2308,7 +2494,7 @@ private struct FramedCaptureControls: View {
     }
 }
 
-private struct SidebarAspectPreviewGrid: View {
+private struct EditorAspectPreviewGrid: View {
     let summary: RecordingSummary
     let previewImage: NSImage?
 
@@ -2321,14 +2507,14 @@ private struct SidebarAspectPreviewGrid: View {
             alignment: .leading,
             spacing: 10
         ) {
-            SidebarAspectPreviewCard(
+            EditorAspectPreviewCard(
                 title: "4:5",
                 subtitle: "Feed",
                 aspectRatio: 4.0 / 5.0,
                 cameraCrop: cameraCrop,
                 previewImage: previewImage
             )
-            SidebarAspectPreviewCard(
+            EditorAspectPreviewCard(
                 title: "9:16",
                 subtitle: "Short",
                 aspectRatio: 9.0 / 16.0,
@@ -2361,7 +2547,7 @@ private struct SidebarAspectPreviewGrid: View {
     }
 }
 
-private struct SidebarAspectPreviewCard: View {
+private struct EditorAspectPreviewCard: View {
     let title: String
     let subtitle: String
     let aspectRatio: Double
@@ -2370,7 +2556,7 @@ private struct SidebarAspectPreviewCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            Rectangle()
                 .fill(Color.black.opacity(0.32))
                 .aspectRatio(aspectRatio, contentMode: .fit)
                 .frame(maxWidth: .infinity)
@@ -2379,9 +2565,9 @@ private struct SidebarAspectPreviewCard: View {
                         previewBody(size: proxy.size)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .clipped()
                 .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    Rectangle()
                         .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                 }
 
@@ -2395,6 +2581,8 @@ private struct SidebarAspectPreviewCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) \(subtitle) video preview")
     }
 
     private func previewBody(size: CGSize) -> some View {
@@ -2496,7 +2684,7 @@ private extension NSImage {
             .cropped(to: cropRect)
             .transformed(by: CGAffineTransform(translationX: -cropRect.minX, y: -cropRect.minY))
         let outputRect = CGRect(origin: .zero, size: cropRect.size)
-        guard let outputCGImage = SidebarImageCropper.context.createCGImage(croppedImage, from: outputRect) else {
+        guard let outputCGImage = AspectPreviewImageCropper.context.createCGImage(croppedImage, from: outputRect) else {
             return nil
         }
 
@@ -2591,7 +2779,7 @@ private extension NSImage {
     }
 }
 
-private enum SidebarImageCropper {
+private enum AspectPreviewImageCropper {
     static let context = CIContext(options: nil)
 }
 
@@ -2850,21 +3038,29 @@ private struct CompactIdleView: View {
         ZStack {
             LiquidGlassBackdrop()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    readyHeader
-                    readyColumns
-                    recordingFooter
+            VStack(spacing: 12) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        readyHeader
+                        readyVisualSources
+                        readyAudioSources
+                        recordingOptions
+                    }
+                    .padding(20)
+                    .frame(maxWidth: 1180, alignment: .topLeading)
+                    .liquidGlassSurface(cornerRadius: 26)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .padding(20)
-                .frame(maxWidth: 1120, alignment: .topLeading)
-                .liquidGlassSurface(cornerRadius: 26)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .scrollIndicators(.automatic)
+
+                startRecordingAction
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 18)
             }
-            .scrollIndicators(.automatic)
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 900, minHeight: 680)
         .task {
             await coordinator.refreshCaptureTargets()
             await coordinator.startSetupPreview()
@@ -2907,27 +3103,52 @@ private struct CompactIdleView: View {
             }
 
             Spacer()
+
+            Button {
+                Task {
+                    await coordinator.checkForUpdates(userInitiated: true)
+                }
+            } label: {
+                if coordinator.isCheckingForUpdates {
+                    HStack(spacing: 7) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking…")
+                    }
+                } else {
+                    Label("Check for Updates", systemImage: "arrow.down.circle")
+                }
+            }
+            .disabled(coordinator.isCheckingForUpdates)
+            .help("Check GitHub for a newer Glimpse release")
         }
     }
 
-    private var readyColumns: some View {
-        HStack(alignment: .top, spacing: 12) {
+    private var readyVisualSources: some View {
+        HStack(alignment: .top, spacing: 14) {
             ReadyCameraColumn()
                 .environmentObject(coordinator)
-                .frame(maxWidth: .infinity)
+                .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+                .layoutPriority(0)
+            ReadyScreenColumn()
+                .environmentObject(coordinator)
+                .frame(minWidth: 460, maxWidth: .infinity)
+                .layoutPriority(1)
+        }
+    }
+
+    private var readyAudioSources: some View {
+        HStack(alignment: .top, spacing: 14) {
             ReadyMicrophoneColumn()
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
             ReadySystemAudioColumn()
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
-            ReadyScreenColumn()
-                .environmentObject(coordinator)
-                .frame(maxWidth: .infinity)
         }
     }
 
-    private var recordingFooter: some View {
+    private var recordingOptions: some View {
         HStack(spacing: 12) {
             Label(
                 "Saving to \(coordinator.settings.outputDirectory.lastPathComponent)",
@@ -2954,20 +3175,28 @@ private struct CompactIdleView: View {
             }
 
             Spacer()
-
-            Button {
-                Task {
-                    await coordinator.startRecording()
-                }
-            } label: {
-                Label("Start Recording", systemImage: "record.circle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .liquidGlassSurface(cornerRadius: 16, tint: .red.opacity(0.22), interactive: true)
-            .disabled(!coordinator.canStart)
-            .keyboardShortcut("r", modifiers: [.command])
         }
+        .padding(.horizontal, 2)
+    }
+
+    private var startRecordingAction: some View {
+        Button {
+            Task {
+                await coordinator.startRecording()
+            }
+        } label: {
+            Label("Start Recording", systemImage: "record.circle.fill")
+                .font(.title3.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(.red)
+        .frame(maxWidth: 1180)
+        .disabled(!coordinator.canStart)
+        .keyboardShortcut("r", modifiers: [.command])
+        .accessibilityHint("Starts recording the selected display or window")
     }
 
     private func restartPreview() {
@@ -2977,7 +3206,7 @@ private struct CompactIdleView: View {
     }
 }
 
-private struct ReadySourceCard<Content: View>: View {
+private struct ReadyVisualSourceCard<Content: View>: View {
     let title: String
     let systemImage: String
     let accentColor: Color
@@ -2996,26 +3225,27 @@ private struct ReadySourceCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 38, weight: .medium))
-                .foregroundStyle(accentColor)
-                .frame(width: 68, height: 68)
-                .background(accentColor.opacity(0.12), in: Circle())
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 38, height: 38)
+                    .background(accentColor.opacity(0.12), in: Circle())
+                    .accessibilityHidden(true)
 
-            Text(title)
-                .font(.headline)
-                .multilineTextAlignment(.center)
+                Text(title)
+                    .font(.headline)
+
+                Spacer()
+            }
 
             Divider()
 
             content
-
-            Spacer(minLength: 0)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 390, maxHeight: 390, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 410, maxHeight: 410, alignment: .topLeading)
         .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -3028,7 +3258,7 @@ private struct ReadyCameraColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Camera", systemImage: "video.fill", accentColor: .blue) {
+        ReadyVisualSourceCard(title: "Camera", systemImage: "video.fill", accentColor: .blue) {
             Toggle("Include camera", isOn: $coordinator.settings.overlay.isEnabled)
                 .toggleStyle(.switch)
 
@@ -3099,33 +3329,42 @@ private struct ReadyMicrophoneColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Microphone", systemImage: "mic.fill", accentColor: .green) {
-            Toggle("Include microphone", isOn: $coordinator.settings.microphoneEnabled)
-                .toggleStyle(.switch)
+        ReadyAudioSourceCard(
+            title: "Microphone",
+            systemImage: "mic.fill",
+            accentColor: .green,
+            toggleTitle: "Include microphone",
+            isOn: $coordinator.settings.microphoneEnabled
+        ) {
+            HStack(alignment: .center, spacing: 16) {
+                ReadyAudioFeedback(
+                    level: coordinator.microphoneLevel,
+                    isEnabled: coordinator.settings.microphoneEnabled,
+                    listeningText: "Listening to microphone",
+                    color: .green
+                )
+                .frame(maxWidth: .infinity)
 
-            ReadyAudioFeedback(
-                level: coordinator.microphoneLevel,
-                isEnabled: coordinator.settings.microphoneEnabled,
-                listeningText: "Listening to microphone",
-                color: .green
-            )
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Microphone", selection: $coordinator.settings.selectedMicrophoneID) {
+                        Text("Default Microphone").tag(String?.none)
+                        ForEach(coordinator.availableMicrophones) { microphone in
+                            Text(microphone.name).tag(Optional(microphone.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .disabled(!coordinator.settings.microphoneEnabled)
+                    .accessibilityLabel("Microphone")
 
-            Picker("Microphone", selection: $coordinator.settings.selectedMicrophoneID) {
-                Text("Default Microphone").tag(String?.none)
-                ForEach(coordinator.availableMicrophones) { microphone in
-                    Text(microphone.name).tag(Optional(microphone.id))
+                    ReadyGainSlider(
+                        title: "Mic gain",
+                        value: $coordinator.settings.microphoneGain,
+                        systemImage: "mic"
+                    )
+                    .disabled(!coordinator.settings.microphoneEnabled)
                 }
+                .frame(minWidth: 190, maxWidth: 240)
             }
-            .labelsHidden()
-            .disabled(!coordinator.settings.microphoneEnabled)
-            .accessibilityLabel("Microphone")
-
-            ReadyGainSlider(
-                title: "Mic gain",
-                value: $coordinator.settings.microphoneGain,
-                systemImage: "mic"
-            )
-            .disabled(!coordinator.settings.microphoneEnabled)
         }
     }
 }
@@ -3134,30 +3373,38 @@ private struct ReadySystemAudioColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "System Audio", systemImage: "speaker.wave.2.fill", accentColor: .purple) {
-            Toggle("Include system audio", isOn: $coordinator.settings.systemAudioEnabled)
-                .toggleStyle(.switch)
-                .disabled(!coordinator.isSystemAudioAvailable)
+        ReadyAudioSourceCard(
+            title: "System Audio",
+            systemImage: "speaker.wave.2.fill",
+            accentColor: .purple,
+            toggleTitle: "Include system audio",
+            isOn: $coordinator.settings.systemAudioEnabled,
+            isAvailable: coordinator.isSystemAudioAvailable
+        ) {
+            HStack(alignment: .center, spacing: 16) {
+                ReadyAudioFeedback(
+                    level: coordinator.systemAudioLevel,
+                    isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
+                    listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
+                    color: .purple
+                )
+                .frame(maxWidth: .infinity)
 
-            ReadyAudioFeedback(
-                level: coordinator.systemAudioLevel,
-                isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
-                listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
-                color: .purple
-            )
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Play something to check that its level moves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
-            Text("Play something to check that its level moves.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            ReadyGainSlider(
-                title: "System gain",
-                value: $coordinator.settings.systemAudioGain,
-                systemImage: "speaker.wave.2"
-            )
-            .disabled(!coordinator.settings.systemAudioEnabled || !coordinator.isSystemAudioAvailable)
+                    ReadyGainSlider(
+                        title: "System gain",
+                        value: $coordinator.settings.systemAudioGain,
+                        systemImage: "speaker.wave.2"
+                    )
+                    .disabled(!coordinator.settings.systemAudioEnabled || !coordinator.isSystemAudioAvailable)
+                }
+                .frame(minWidth: 190, maxWidth: 240)
+            }
         }
     }
 }
@@ -3166,46 +3413,13 @@ private struct ReadyScreenColumn: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ReadySourceCard(title: "Screen Recording", systemImage: "display", accentColor: .orange) {
-            Label("Always included", systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            ReadyScreenPreview()
-                .environmentObject(coordinator)
-
-            Menu {
-                ForEach(coordinator.captureTargets) { target in
-                    Button {
-                        Task {
-                            await coordinator.selectCaptureTarget(target)
-                        }
-                    } label: {
-                        Label(
-                            target.title,
-                            systemImage: target.id == coordinator.selectedCaptureTarget?.id
-                                ? "checkmark.circle.fill"
-                                : target.systemImage
-                        )
-                    }
-                }
-            } label: {
-                Label(
-                    coordinator.selectedCaptureTarget?.title ?? "Choose a screen or window",
-                    systemImage: coordinator.selectedCaptureTarget?.systemImage ?? "display"
-                )
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .disabled(coordinator.isLoadingCaptureTargets || coordinator.captureTargets.isEmpty)
-            .accessibilityLabel("Screen recording target")
-
-            HStack(spacing: 8) {
-                Text(screenTargetDetail)
-                    .font(.caption)
+        ReadyVisualSourceCard(title: "Screen Recording", systemImage: "display", accentColor: .orange) {
+            HStack(spacing: 10) {
+                Label("Choose a display or window", systemImage: "cursorarrow.click")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer()
 
                 Button {
                     Task {
@@ -3217,58 +3431,135 @@ private struct ReadyScreenColumn: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Image(systemName: "arrow.clockwise")
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
-                .buttonStyle(.borderless)
                 .disabled(coordinator.isLoadingCaptureTargets)
                 .help("Refresh screens and windows")
-                .accessibilityLabel("Refresh screens and windows")
             }
-        }
-    }
 
-    private var screenTargetDetail: String {
-        if coordinator.isLoadingCaptureTargets {
-            return "Finding screens and windows…"
+            ReadyCaptureTargetSelector()
+                .environmentObject(coordinator)
         }
-        if let selectedTarget = coordinator.selectedCaptureTarget {
-            return selectedTarget.subtitle
-        }
-        return "No capture target available"
     }
 }
 
-private struct ReadyScreenPreview: View {
+private struct ReadyCaptureTargetSelector: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black.opacity(0.24))
-
-            if let image = coordinator.previewImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .accessibilityLabel("Live screen preview")
-            } else if coordinator.isSetupPreviewStarting {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Starting screen preview")
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "display")
-                        .font(.title2)
-                    Text("Waiting for screen")
-                        .font(.caption)
+        Group {
+            if coordinator.isLoadingCaptureTargets {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading displays and windows")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+            } else if coordinator.captureTargets.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "display.slash")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("No displays or windows available")
+                        .font(.callout.weight(.medium))
+                    Text("Enable Screen Recording permission, then refresh.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+                .background(.black.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(coordinator.captureTargets) { target in
+                            let isSelected = target.id == coordinator.selectedCaptureTarget?.id
+
+                            Button {
+                                Task {
+                                    await coordinator.selectCaptureTarget(target)
+                                }
+                            } label: {
+                                CaptureTargetCard(
+                                    target: target,
+                                    actionTitle: isSelected ? "Selected" : "Select",
+                                    actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
+                                    isSelected: isSelected
+                                )
+                                .frame(width: 238)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(target.title), \(target.subtitle)")
+                            .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                            .accessibilityHint("Select this capture target")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(height: 236)
             }
         }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct ReadyAudioSourceCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    let accentColor: Color
+    let toggleTitle: String
+    @Binding var isOn: Bool
+    var isAvailable = true
+    let content: Content
+
+    init(
+        title: String,
+        systemImage: String,
+        accentColor: Color,
+        toggleTitle: String,
+        isOn: Binding<Bool>,
+        isAvailable: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.accentColor = accentColor
+        self.toggleTitle = toggleTitle
+        _isOn = isOn
+        self.isAvailable = isAvailable
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 30, height: 30)
+                    .background(accentColor.opacity(0.12), in: Circle())
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(.headline)
+
+                Spacer()
+
+                Toggle(toggleTitle, isOn: $isOn)
+                    .toggleStyle(.switch)
+                    .disabled(!isAvailable)
+            }
+
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.09), lineWidth: 1)
+        }
     }
 }
 
@@ -3294,7 +3585,7 @@ private struct ReadyAudioFeedback: View {
             }
             .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76)
             .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .animation(.easeOut(duration: 0.08), value: level)
+            .animation(.interactiveSpring(response: 0.12, dampingFraction: 0.54), value: level)
 
             Text(isEnabled ? listeningText : "Source off")
                 .font(.caption)
@@ -3310,7 +3601,7 @@ private struct ReadyAudioFeedback: View {
         guard isEnabled else {
             return 4
         }
-        let visibleLevel = max(0.035, min(1, level * 2.6))
+        let visibleLevel = max(0.035, min(1, level))
         return max(4, 68 * Self.barProfile[index] * visibleLevel)
     }
 }
@@ -3663,6 +3954,48 @@ private struct StatusPill: View {
             .padding(.vertical, 5)
             .liquidGlassSurface(cornerRadius: 10)
             .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct ActiveRecordingControls: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Button {
+                coordinator.togglePause()
+            } label: {
+                Label(
+                    coordinator.state == .paused ? "Resume Recording" : "Pause Recording",
+                    systemImage: coordinator.state == .paused ? "play.fill" : "pause.fill"
+                )
+                .font(.title2.weight(.bold))
+                .frame(maxWidth: .infinity, minHeight: 72)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.orange)
+            .disabled(!coordinator.canPauseOrResume)
+            .accessibilityHint("Keeps the current recording session open")
+
+            Button(role: .destructive) {
+                Task {
+                    await coordinator.stopRecording()
+                }
+            } label: {
+                Label("Stop Recording", systemImage: "stop.fill")
+                    .font(.title2.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 72)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.red)
+            .disabled(!coordinator.canStop)
+            .keyboardShortcut(".", modifiers: [.command])
+            .accessibilityHint("Finishes and saves the current recording")
+        }
+        .padding(18)
+        .liquidGlassSurface(cornerRadius: 22)
     }
 }
 
@@ -4149,10 +4482,10 @@ private struct LiquidGlassCluster<Content: View>: View {
 }
 
 private extension View {
-    func previewSurface(cornerRadius: CGFloat) -> some View {
+    func postRecordingPreviewSurface() -> some View {
         self
-            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(Color.black.opacity(0.18))
+            .clipped()
     }
 
     @ViewBuilder
@@ -4249,7 +4582,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 540, height: 480)
         case .splash:
-            return NSSize(width: 900, height: 600)
+            return NSSize(width: 900, height: 680)
         case .editor:
             return NSSize(width: 880, height: 620)
         case .onboarding:
@@ -4264,7 +4597,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 640, height: 540)
         case .splash:
-            return NSSize(width: 1060, height: 660)
+            return NSSize(width: 1120, height: 780)
         case .editor:
             return NSSize(width: 1120, height: 720)
         case .onboarding:
