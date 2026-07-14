@@ -57,6 +57,8 @@ final class RecordingCoordinator: ObservableObject {
     private var lastOutputURL: URL?
     private var activeSourceSet = RecordingSourceSet(camera: false, microphone: false, systemAudio: false)
     private var activeCaptureTargetKind: RecordingCaptureTargetKind = .display
+    private var setupPreviewStartID: UUID?
+    private var setupPreviewStartTask: Task<Void, Never>?
     private let lastAutomaticUpdateCheckKey = "Glimpse.lastAutomaticUpdateCheck"
 
     init() {
@@ -300,18 +302,56 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         isSetupPreviewStarting = true
+        let startID = UUID()
+        let startTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            await self.performSetupPreviewStart(id: startID)
+        }
+        setupPreviewStartID = startID
+        setupPreviewStartTask = startTask
+
+        await startTask.value
+
+        if setupPreviewStartID == startID {
+            setupPreviewStartID = nil
+            setupPreviewStartTask = nil
+        }
+    }
+
+    private func performSetupPreviewStart(id startID: UUID) async {
+        defer {
+            if setupPreviewStartID == startID {
+                isSetupPreviewStarting = false
+            }
+        }
         var previewStatus = "Previewing setup"
 
         do {
             if selectedCaptureTarget == nil {
                 await refreshCaptureTargets()
             }
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                return
+            }
 
             _ = try await screenCapture.prepare(target: selectedCaptureTarget)
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                return
+            }
 
             var includeCamera = false
             if settings.overlay.isEnabled {
                 if await isCameraReadyForSetupPreview() {
+                    try Task.checkCancellation()
+                    guard setupPreviewStartID == startID, state == .idle else {
+                        await screenCapture.stop()
+                        return
+                    }
                     do {
                         try cameraCapture.prepare(deviceID: settings.selectedCameraID)
                         includeCamera = true
@@ -324,6 +364,12 @@ final class RecordingCoordinator: ObservableObject {
             }
 
             try await screenCapture.start()
+            try Task.checkCancellation()
+            guard setupPreviewStartID == startID, state == .idle else {
+                await screenCapture.stop()
+                cameraCapture.stop()
+                return
+            }
             if includeCamera {
                 cameraCapture.start()
             }
@@ -331,16 +377,29 @@ final class RecordingCoordinator: ObservableObject {
             isSetupPreviewActive = true
             statusMessage = previewStatus
         } catch {
-            await stopSetupPreview()
-            errorMessage = readableError(error)
+            await screenCapture.stop()
+            cameraCapture.stop()
+            if setupPreviewStartID == startID, !Task.isCancelled {
+                errorMessage = readableError(error)
+            }
         }
 
-        isSetupPreviewStarting = false
     }
 
     func stopSetupPreview() async {
         guard isSetupPreviewActive || isSetupPreviewStarting else {
             return
+        }
+
+        let startID = setupPreviewStartID
+        let startTask = setupPreviewStartTask
+        // ScreenCaptureKit preparation is asynchronous. Wait for a cancelled start to unwind
+        // before another preview or an explicit recording reuses the capture service.
+        startTask?.cancel()
+        await startTask?.value
+        if setupPreviewStartID == startID {
+            setupPreviewStartID = nil
+            setupPreviewStartTask = nil
         }
 
         await screenCapture.stop()
