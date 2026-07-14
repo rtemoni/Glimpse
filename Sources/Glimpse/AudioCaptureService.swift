@@ -51,7 +51,7 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         if includeSystemAudio {
             let systemAudioStream = SystemAudioStream()
             systemAudioStream.sampleHandler = { [weak self] sampleBuffer in
-                self?.levelHandler?(Self.normalizedLevel(from: sampleBuffer), .system)
+                self?.levelHandler?(Self.displayLevel(from: sampleBuffer), .system)
                 self?.sampleHandler?(sampleBuffer, .system)
             }
             do {
@@ -105,7 +105,7 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         from connection: AVCaptureConnection
     ) {
         if let averagePower = connection.audioChannels.first?.averagePowerLevel {
-            levelHandler?(Self.normalizedLevel(fromAveragePower: averagePower), .microphone)
+            levelHandler?(AudioLevelScale.displayLevel(decibels: Double(averagePower)), .microphone)
         }
         sampleHandler?(sampleBuffer, .microphone)
     }
@@ -150,15 +150,7 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         return AVCaptureDevice.default(for: .audio)
     }
 
-    private static func normalizedLevel(fromAveragePower averagePower: Float) -> Double {
-        guard averagePower.isFinite else {
-            return 0
-        }
-        let clamped = max(-60, min(0, averagePower))
-        return pow(10, Double(clamped) / 20)
-    }
-
-    private static func normalizedLevel(from sampleBuffer: CMSampleBuffer) -> Double {
+    private static func displayLevel(from sampleBuffer: CMSampleBuffer) -> Double {
         let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
         guard frameCount > 0,
               let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else {
@@ -232,7 +224,8 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         guard sampleCount > 0 else {
             return 0
         }
-        return min(1, sqrt(squaredTotal / Double(sampleCount)))
+        let rootMeanSquare = sqrt(squaredTotal / Double(sampleCount))
+        return AudioLevelScale.displayLevel(rootMeanSquare: rootMeanSquare)
     }
 }
 
