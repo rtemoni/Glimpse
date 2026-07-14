@@ -8,7 +8,12 @@ struct GlimpseApp: App {
     @StateObject private var statusItemController = RecordingStatusItemController()
 
     init() {
-        if let image = Self.appIconImage() {
+        // Application bundles resolve AppIcon from Assets.car so macOS can apply
+        // the current default, dark, or tinted Liquid Glass appearance. `swift
+        // run` has no application bundle, so give that launch path the legacy
+        // icon explicitly.
+        if Bundle.main.bundleURL.pathExtension != "app",
+           let image = Self.appIconImage() {
             NSApplication.shared.applicationIconImage = image
         }
     }
