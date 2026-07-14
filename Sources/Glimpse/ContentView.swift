@@ -134,6 +134,41 @@ private struct RecorderWorkspace: View {
     }
 }
 
+private enum EditorWorkspaceTab: String, CaseIterable, Identifiable {
+    case timeline
+    case recording
+    case frame
+    case export
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .timeline:
+            return "Timeline"
+        case .recording:
+            return "Recording"
+        case .frame:
+            return "Frame"
+        case .export:
+            return "Export"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .timeline:
+            return "timeline.selection"
+        case .recording:
+            return "info.circle"
+        case .frame:
+            return "rectangle.inset.filled"
+        case .export:
+            return "slider.horizontal.3"
+        }
+    }
+}
+
 private struct EditorWorkspace: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
     let summary: RecordingSummary
@@ -151,27 +186,35 @@ private struct EditorWorkspace: View {
     @State private var isSkippingPlaybackGap = false
     @State private var thumbnails: [TimelineThumbnail] = []
     @State private var waveformSamples: [TimelineWaveformSample] = []
-    @State private var sidebarPreviewImage: NSImage?
-    @State private var sidebarPreviewRequest = 0
-    @State private var lastSidebarPreviewTime: Double = -1
+    @State private var aspectPreviewImage: NSImage?
+    @State private var aspectPreviewRequest = 0
+    @State private var lastAspectPreviewTime: Double = -1
+    @State private var selectedWorkspaceTab: EditorWorkspaceTab = .timeline
 
     var body: some View {
         ZStack {
             LiquidGlassBackdrop()
 
             if let session = coordinator.editingSession {
-                HSplitView {
-                    VStack(spacing: 8) {
+                VStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
                         FramedVideoPreview(
                             player: player,
                             sourceAspectRatio: videoAspectRatio,
                             settings: coordinator.exportSettings.framedCapture,
                             roundsForeground: summary.captureTargetKind == .window
                         )
-                            .previewSurface(cornerRadius: 24)
-                            .frame(minWidth: 420, maxWidth: .infinity, alignment: .top)
-                            .layoutPriority(1)
+                        .postRecordingPreviewSurface()
+                        .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .accessibilityLabel("Recording preview")
 
+                        EditorAspectPreviewGrid(summary: summary, previewImage: aspectPreviewImage)
+                            .frame(width: 220)
+                    }
+                    .frame(maxHeight: 380)
+                    .layoutPriority(1)
+
+                    TabView(selection: $selectedWorkspaceTab) {
                         TimelineEditorView(
                             session: session,
                             duration: summary.duration,
@@ -193,17 +236,38 @@ private struct EditorWorkspace: View {
                             splitAtPlayhead: splitAtPlayhead,
                             canUndo: canUndo
                         )
-                        .liquidGlassSurface(cornerRadius: 24)
-                    }
-                    .padding(.leading, 12)
-                    .padding(.vertical, 12)
+                        .tag(EditorWorkspaceTab.timeline)
+                        .tabItem {
+                            Label(EditorWorkspaceTab.timeline.title, systemImage: EditorWorkspaceTab.timeline.systemImage)
+                        }
 
-                    ExportPanel(summary: summary, session: session, previewImage: sidebarPreviewImage)
+                        EditorRecordingPanel(summary: summary, session: session)
+                            .environmentObject(coordinator)
+                            .tag(EditorWorkspaceTab.recording)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.recording.title, systemImage: EditorWorkspaceTab.recording.systemImage)
+                            }
+
+                        FramedCaptureControls(settings: $coordinator.exportSettings.framedCapture)
+                            .tag(EditorWorkspaceTab.frame)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.frame.title, systemImage: EditorWorkspaceTab.frame.systemImage)
+                            }
+
+                        EditorExportSettingsPanel()
+                            .environmentObject(coordinator)
+                            .tag(EditorWorkspaceTab.export)
+                            .tabItem {
+                                Label(EditorWorkspaceTab.export.title, systemImage: EditorWorkspaceTab.export.systemImage)
+                            }
+                    }
+                    .liquidGlassSurface(cornerRadius: 24)
+                    .frame(minHeight: 210, idealHeight: 225, maxHeight: 245)
+
+                    EditorExportBar(summary: summary)
                         .environmentObject(coordinator)
-                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
-                        .padding(.trailing, 12)
-                        .padding(.vertical, 12)
                 }
+                .padding(12)
             }
         }
         .frame(minWidth: 880, minHeight: 620)
@@ -217,7 +281,7 @@ private struct EditorWorkspace: View {
             }
             loadThumbnails()
             loadWaveform()
-            loadSidebarPreview(force: true)
+            loadAspectPreview(force: true)
         }
         .onDisappear {
             player.pause()
@@ -485,7 +549,7 @@ private struct EditorWorkspace: View {
         currentTime = clamped
         player.pause()
         applyPreviewAudioMute(at: clamped)
-        loadSidebarPreview(time: clamped, force: true)
+        loadAspectPreview(time: clamped, force: true)
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -592,7 +656,7 @@ private struct EditorWorkspace: View {
         } else {
             currentTime = seconds
             applyPreviewAudioMute(at: seconds)
-            loadSidebarPreview(time: seconds)
+            loadAspectPreview(time: seconds)
         }
     }
 
@@ -600,7 +664,7 @@ private struct EditorWorkspace: View {
         let clamped = min(max(seconds, 0), max(summary.duration, 0))
         currentTime = clamped
         applyPreviewAudioMute(at: clamped)
-        loadSidebarPreview(time: clamped, force: true)
+        loadAspectPreview(time: clamped, force: true)
         isSkippingPlaybackGap = true
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
@@ -732,14 +796,14 @@ private struct EditorWorkspace: View {
         }
     }
 
-    private func loadSidebarPreview(time: Double? = nil, force: Bool = false) {
+    private func loadAspectPreview(time: Double? = nil, force: Bool = false) {
         let targetTime = min(max(time ?? currentTime, 0), max(summary.duration, 0))
-        guard force || abs(targetTime - lastSidebarPreviewTime) >= 0.12 else {
+        guard force || abs(targetTime - lastAspectPreviewTime) >= 0.12 else {
             return
         }
-        lastSidebarPreviewTime = targetTime
-        sidebarPreviewRequest += 1
-        let request = sidebarPreviewRequest
+        lastAspectPreviewTime = targetTime
+        aspectPreviewRequest += 1
+        let request = aspectPreviewRequest
         let url = summary.sourceURL
         Task {
             let frame = await Task.detached {
@@ -751,8 +815,8 @@ private struct EditorWorkspace: View {
                     )
                 )
             }.value
-            if request == sidebarPreviewRequest {
-                sidebarPreviewImage = frame.image
+            if request == aspectPreviewRequest {
+                aspectPreviewImage = frame.image
             }
         }
     }
@@ -1808,7 +1872,7 @@ private struct TimelineClipBlock: View {
                         .frame(maxWidth: .infinity)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipped()
 
             LinearGradient(
                 colors: [
@@ -1819,13 +1883,13 @@ private struct TimelineClipBlock: View {
                 endPoint: .bottom
             )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipped()
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            Rectangle()
                 .fill(Color.black.opacity(0.20))
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            Rectangle()
                 .strokeBorder(
                     isSelected ? (isFocused ? Color.accentColor : Color.white.opacity(0.74)) : Color.white.opacity(0.36),
                     lineWidth: isSelected ? 2 : 1
@@ -1939,72 +2003,91 @@ private struct TimelineThumbnailCard: View {
     }
 }
 
-private struct ExportPanel: View {
+private struct EditorRecordingPanel: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
     let summary: RecordingSummary
     let session: EditingSession
-    let previewImage: NSImage?
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 16) {
-                SidebarAspectPreviewGrid(summary: summary, previewImage: previewImage)
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Edit Recording")
+                    .font(.title3.weight(.semibold))
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Edit Recording")
-                        .font(.title3.weight(.semibold))
+                Text(summary.sourceURL.lastPathComponent)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
 
-                    Text(summary.sourceURL.lastPathComponent)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-
-                    if let status = coordinator.statusMessage {
-                        StatusPill(
-                            text: status,
-                            systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
-                        )
-                    }
+                if let status = coordinator.statusMessage {
+                    StatusPill(
+                        text: status,
+                        systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
+                    )
                 }
+            }
+            .frame(minWidth: 190, maxWidth: 280, alignment: .leading)
 
-                VStack(spacing: 8) {
-                    Button {
-                        coordinator.revealInFinder(summary.sourceURL)
-                    } label: {
-                        Label("Reveal Master", systemImage: "folder")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                    }
+            Divider()
 
-                    Button {
-                        coordinator.recordAgain()
-                    } label: {
-                        Label("Record Again", systemImage: "record.circle")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 28) {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                     infoRow("Clips", "\(session.clipRanges.count)")
                     infoRow("Export", formatTime(exportDuration))
-                    infoRow("Master", summary.sourceURL.lastPathComponent)
                     infoRow("Duration", formatTime(summary.duration))
                     infoRow("Size", formatFileSize(summary.fileSizeBytes))
-                    infoRow("Frame", "\(Int(summary.videoSize.width)) x \(Int(summary.videoSize.height))")
-                    infoRow("Sources", sourceSummary(summary.sources))
                 }
 
-                Divider()
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+                    infoRow("Frame", "\(Int(summary.videoSize.width)) x \(Int(summary.videoSize.height))")
+                    infoRow("Sources", sourceSummary(summary.sources))
+                    infoRow("Master", summary.sourceURL.lastPathComponent)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
-                FramedCaptureControls(settings: $coordinator.exportSettings.framedCapture)
+    private var exportDuration: Double {
+        session.keptRanges.reduce(0) { $0 + $1.duration }
+    }
 
-                Divider()
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        GridRow {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+        .font(.callout)
+    }
 
-                Text("Export")
+    private func sourceSummary(_ sources: RecordingSourceSet) -> String {
+        var parts: [String] = []
+        if sources.camera {
+            parts.append("Camera")
+        }
+        if sources.microphone {
+            parts.append("Mic")
+        }
+        if sources.systemAudio {
+            parts.append("System")
+        }
+        return parts.isEmpty ? "Screen only" : parts.joined(separator: ", ")
+    }
+}
+
+private struct EditorExportSettingsPanel: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Export Settings")
                     .font(.headline)
 
                 ExportAspectPresetPicker(settings: $coordinator.exportSettings)
@@ -2032,94 +2115,139 @@ private struct ExportPanel: View {
                         .frame(width: 74)
                     }
                 }
+            }
+            .frame(minWidth: 230, maxWidth: 320, alignment: .leading)
 
-                Button {
-                    Task {
-                        await coordinator.exportEditedRecording()
-                    }
-                } label: {
-                    Label(coordinator.isExporting ? "Exporting" : "Export Edited Video", systemImage: "square.and.arrow.up")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(coordinator.isExporting || coordinator.editingSession?.keptRanges.isEmpty == true)
+            Divider()
 
-                if coordinator.isExporting {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ProgressView(value: coordinator.exportProgress)
-                            .progressViewStyle(.linear)
-                        Text("\(Int((coordinator.exportProgress * 100).rounded()))%")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            exportStatus
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
-                if !coordinator.exportedVideos.isEmpty {
-                    Divider()
-                    Text(coordinator.exportedVideos.count == 1 ? "Export complete" : "Exports complete")
-                        .font(.headline)
+    @ViewBuilder
+    private var exportStatus: some View {
+        if coordinator.isExporting {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Exporting Video")
+                    .font(.headline)
+                ProgressView(value: coordinator.exportProgress)
+                    .progressViewStyle(.linear)
+                Text("\(Int((coordinator.exportProgress * 100).rounded()))% complete")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        } else if coordinator.exportedVideos.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Ready to Export")
+                    .font(.headline)
+                Text("Choose the formats here, then use Export Video at the bottom right.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(coordinator.exportedVideos.count == 1 ? "Export Complete" : "Exports Complete")
+                    .font(.headline)
 
+                HStack(alignment: .top, spacing: 10) {
                     ForEach(coordinator.exportedVideos) { exportedVideo in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("\(exportedVideo.preset.displayName) \(exportedVideo.preset.description)")
-                                .font(.callout.weight(.semibold))
-
-                            HStack(spacing: 8) {
-                                Button {
-                                    coordinator.openFile(exportedVideo.url)
-                                } label: {
-                                    Label("Open", systemImage: "play.rectangle")
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity)
-                                }
-                                Button {
-                                    coordinator.revealInFinder(exportedVideo.url)
-                                } label: {
-                                    Label("Reveal", systemImage: "folder")
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity)
-                                }
-                            }
-                        }
+                        EditorExportResultCard(exportedVideo: exportedVideo)
+                            .environmentObject(coordinator)
                     }
                 }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .liquidGlassSurface(cornerRadius: 24)
     }
+}
 
-    private var exportDuration: Double {
-        session.keptRanges.reduce(0) { $0 + $1.duration }
+private struct EditorExportResultCard: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+    let exportedVideo: ExportedVideo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(exportedVideo.preset.displayName) \(exportedVideo.preset.description)")
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+
+            HStack(spacing: 6) {
+                Button {
+                    coordinator.openFile(exportedVideo.url)
+                } label: {
+                    Label("Open", systemImage: "play.rectangle")
+                        .lineLimit(1)
+                }
+                Button {
+                    coordinator.revealInFinder(exportedVideo.url)
+                } label: {
+                    Label("Reveal", systemImage: "folder")
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(10)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private func infoRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 62, alignment: .leading)
-            Text(value)
-                .lineLimit(2)
-                .truncationMode(.middle)
-        }
-        .font(.callout)
-    }
+private struct EditorExportBar: View {
+    @EnvironmentObject private var coordinator: RecordingCoordinator
+    let summary: RecordingSummary
 
-    private func sourceSummary(_ sources: RecordingSourceSet) -> String {
-        var parts: [String] = []
-        if sources.camera {
-            parts.append("Camera")
+    var body: some View {
+        HStack(spacing: 10) {
+            if let status = coordinator.statusMessage {
+                StatusPill(
+                    text: status,
+                    systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
+                )
+            }
+
+            if coordinator.isExporting {
+                ProgressView(value: coordinator.exportProgress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 120)
+                    .accessibilityLabel("Export progress")
+                    .accessibilityValue("\(Int((coordinator.exportProgress * 100).rounded())) percent")
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                coordinator.revealInFinder(summary.sourceURL)
+            } label: {
+                Label("Reveal Master", systemImage: "folder")
+            }
+
+            Button {
+                coordinator.recordAgain()
+            } label: {
+                Label("Record Again", systemImage: "record.circle")
+            }
+
+            Button {
+                Task {
+                    await coordinator.exportEditedRecording()
+                }
+            } label: {
+                Label(coordinator.isExporting ? "Exporting" : "Export Video", systemImage: "square.and.arrow.up")
+                    .lineLimit(1)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(coordinator.isExporting || coordinator.editingSession?.keptRanges.isEmpty == true)
+            .accessibilityLabel(coordinator.isExporting ? "Exporting video" : "Export video")
+            .accessibilityHint("Exports the edited recording using the selected export settings")
         }
-        if sources.microphone {
-            parts.append("Mic")
-        }
-        if sources.systemAudio {
-            parts.append("System")
-        }
-        return parts.isEmpty ? "Screen only" : parts.joined(separator: ", ")
+        .controlSize(.regular)
     }
 }
 
@@ -2217,46 +2345,82 @@ private struct FramedCaptureControls: View {
     @Binding var settings: FramedCaptureSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("Background & Frame", isOn: $settings.isEnabled)
-                .font(.headline)
-
-            if settings.isEnabled {
-                Picker("Background", selection: $settings.background) {
-                    ForEach(FramedCaptureBackground.allCases) { background in
-                        Text(background.displayName).tag(background)
-                    }
-                }
-
-                backgroundControls
-
-                VStack(alignment: .leading, spacing: 5) {
-                    settingValueLabel("Padding", "\(Int(settings.padding))")
-                    Slider(value: $settings.padding, in: 0...180)
-                }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    settingValueLabel("Corner Radius", "\(Int(settings.cornerRadius))")
-                    Slider(value: $settings.cornerRadius, in: 0...48)
-                }
-
-                Picker("Shadow", selection: $settings.shadow) {
-                    ForEach(FramedCaptureShadow.allCases) { shadow in
-                        Text(shadow.displayName).tag(shadow)
-                    }
-                }
-
-                Picker("Alignment", selection: $settings.alignment) {
-                    ForEach(FramedCaptureAlignment.allCases) { alignment in
-                        Text(alignment.displayName).tag(alignment)
-                    }
-                }
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Background & Frame", isOn: $settings.isEnabled)
+                    .font(.headline)
 
                 Text("Applies only to the full 16:9 master.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 170, maxWidth: 220, alignment: .leading)
+
+            Divider()
+
+            if settings.isEnabled {
+                GroupBox("Background") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Style", selection: $settings.background) {
+                            ForEach(FramedCaptureBackground.allCases) { background in
+                                Text(background.displayName).tag(background)
+                            }
+                        }
+
+                        backgroundControls
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                GroupBox("Geometry") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            settingValueLabel("Padding", "\(Int(settings.padding))")
+                            Slider(value: $settings.padding, in: 0...180)
+                        }
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            settingValueLabel("Corner Radius", "\(Int(settings.cornerRadius))")
+                            Slider(value: $settings.cornerRadius, in: 0...48)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                GroupBox("Placement") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Shadow", selection: $settings.shadow) {
+                            ForEach(FramedCaptureShadow.allCases) { shadow in
+                                Text(shadow.displayName).tag(shadow)
+                            }
+                        }
+
+                        Picker("Alignment", selection: $settings.alignment) {
+                            ForEach(FramedCaptureAlignment.allCases) { alignment in
+                                Text(alignment.displayName).tag(alignment)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "rectangle.inset.filled")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("Enable Background & Frame to configure the exported 16:9 master.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -2308,7 +2472,7 @@ private struct FramedCaptureControls: View {
     }
 }
 
-private struct SidebarAspectPreviewGrid: View {
+private struct EditorAspectPreviewGrid: View {
     let summary: RecordingSummary
     let previewImage: NSImage?
 
@@ -2321,14 +2485,14 @@ private struct SidebarAspectPreviewGrid: View {
             alignment: .leading,
             spacing: 10
         ) {
-            SidebarAspectPreviewCard(
+            EditorAspectPreviewCard(
                 title: "4:5",
                 subtitle: "Feed",
                 aspectRatio: 4.0 / 5.0,
                 cameraCrop: cameraCrop,
                 previewImage: previewImage
             )
-            SidebarAspectPreviewCard(
+            EditorAspectPreviewCard(
                 title: "9:16",
                 subtitle: "Short",
                 aspectRatio: 9.0 / 16.0,
@@ -2361,7 +2525,7 @@ private struct SidebarAspectPreviewGrid: View {
     }
 }
 
-private struct SidebarAspectPreviewCard: View {
+private struct EditorAspectPreviewCard: View {
     let title: String
     let subtitle: String
     let aspectRatio: Double
@@ -2370,7 +2534,7 @@ private struct SidebarAspectPreviewCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            Rectangle()
                 .fill(Color.black.opacity(0.32))
                 .aspectRatio(aspectRatio, contentMode: .fit)
                 .frame(maxWidth: .infinity)
@@ -2379,9 +2543,9 @@ private struct SidebarAspectPreviewCard: View {
                         previewBody(size: proxy.size)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .clipped()
                 .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    Rectangle()
                         .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                 }
 
@@ -2395,6 +2559,8 @@ private struct SidebarAspectPreviewCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) \(subtitle) video preview")
     }
 
     private func previewBody(size: CGSize) -> some View {
@@ -2496,7 +2662,7 @@ private extension NSImage {
             .cropped(to: cropRect)
             .transformed(by: CGAffineTransform(translationX: -cropRect.minX, y: -cropRect.minY))
         let outputRect = CGRect(origin: .zero, size: cropRect.size)
-        guard let outputCGImage = SidebarImageCropper.context.createCGImage(croppedImage, from: outputRect) else {
+        guard let outputCGImage = AspectPreviewImageCropper.context.createCGImage(croppedImage, from: outputRect) else {
             return nil
         }
 
@@ -2591,7 +2757,7 @@ private extension NSImage {
     }
 }
 
-private enum SidebarImageCropper {
+private enum AspectPreviewImageCropper {
     static let context = CIContext(options: nil)
 }
 
@@ -4149,10 +4315,10 @@ private struct LiquidGlassCluster<Content: View>: View {
 }
 
 private extension View {
-    func previewSurface(cornerRadius: CGFloat) -> some View {
+    func postRecordingPreviewSurface() -> some View {
         self
-            .background(Color.black.opacity(0.18), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .background(Color.black.opacity(0.18))
+            .clipped()
     }
 
     @ViewBuilder
