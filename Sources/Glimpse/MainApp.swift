@@ -4,6 +4,7 @@ import AppKit
 
 @main
 struct GlimpseApp: App {
+    @NSApplicationDelegateAdaptor(GlimpseAppDelegate.self) private var appDelegate
     @StateObject private var coordinator = RecordingCoordinator()
     @StateObject private var statusItemController = RecordingStatusItemController()
 

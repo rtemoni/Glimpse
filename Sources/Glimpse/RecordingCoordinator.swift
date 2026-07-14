@@ -51,6 +51,7 @@ final class RecordingCoordinator: ObservableObject {
     private let audioCapture = AudioCaptureService()
     private let compositor = VideoCompositor()
     private let muxer = Muxer()
+    private let recordingLeadTrimmer = RecordingLeadTrimmer()
     private let videoExporter = VideoExporter()
     private let updateChecker = GitHubUpdateChecker()
     private var elapsedTimer: Timer?
@@ -616,9 +617,14 @@ final class RecordingCoordinator: ObservableObject {
 
         stopElapsedTimer()
         await stopCaptureComponents()
+        statusMessage = "Finishing recording"
 
         do {
             try await muxer.finish()
+            if let lastOutputURL {
+                statusMessage = "Removing capture warmup"
+                try await recordingLeadTrimmer.trimRecording(at: lastOutputURL)
+            }
             try transition { try $0.finishStopped() }
             recordingPresentationToken = nil
             if let lastOutputURL {
