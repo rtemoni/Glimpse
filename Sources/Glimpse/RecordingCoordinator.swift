@@ -66,6 +66,10 @@ final class RecordingCoordinator: ObservableObject {
     private var lastMicrophoneLevelUpdate = -Double.infinity
     private var lastSystemAudioLevelUpdate = -Double.infinity
     private let lastAutomaticUpdateCheckKey = "Glimpse.lastAutomaticUpdateCheck"
+    private let screenRecordingAccessPromptedKey = "Glimpse.screenRecordingAccessPrompted"
+    /// Set after we send the user to Screen Recording settings (or a non-granted request).
+    /// macOS only applies that TCC grant to a new process, so onboarding must offer relaunch.
+    private var pendingScreenRecordingRelaunch = false
 
     init() {
         isSystemAudioAvailable = AudioCaptureService.isSystemAudioCaptureSupported
@@ -229,12 +233,16 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         permissionTimer?.invalidate()
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Use `.common` so polling continues while menus/tracking run loops are active
+        // (for example while the user is away in System Settings and returns).
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshPermissionStatuses()
             }
         }
-        permissionTimer?.tolerance = 0.25
+        timer.tolerance = 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        permissionTimer = timer
     }
 
     func stopPermissionMonitoring() {
@@ -266,29 +274,63 @@ final class RecordingCoordinator: ObservableObject {
                 isRequired: false
             )
         ]
+
+        if isOnboardingComplete {
+            permissionTimer?.invalidate()
+            permissionTimer = nil
+        }
     }
 
     func performPermissionAction(for requirement: PermissionRequirement) async {
         switch requirement {
         case .screenRecording:
-            if !CGPreflightScreenCaptureAccess() {
-                _ = CGRequestScreenCaptureAccess()
-            }
-            if !CGPreflightScreenCaptureAccess() {
-                openPermissionSettings(for: .screenRecording)
-            }
+            await handleScreenRecordingPermissionAction()
         case .camera:
             await requestOrOpenAVPermission(for: .video, requirement: .camera)
         case .microphone:
             await requestOrOpenAVPermission(for: .audio, requirement: .microphone)
         case .systemAudio:
-            if isSystemAudioAvailable {
-                openPermissionSettings(for: .screenRecording)
-            }
+            await handleSystemAudioPermissionAction()
         }
 
         refreshPermissionStatuses()
         refreshDevices()
+    }
+
+    /// Relaunches the running app so macOS TCC grants for Screen Recording take effect.
+    func relaunchForUpdatedPermissions() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+
+        let bundleURL = Bundle.main.bundleURL
+        if bundleURL.pathExtension == "app" {
+            NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, _ in
+                DispatchQueue.main.async {
+                    NSApp.terminate(nil)
+                }
+            }
+            // Ensure we quit even if the open callback is delayed.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                NSApp.terminate(nil)
+            }
+            return
+        }
+
+        // Unpackaged / `swift run` executable path.
+        guard let executableURL = Bundle.main.executableURL else {
+            statusMessage = "Quit and reopen Glimpse to apply Screen Recording permission."
+            return
+        }
+
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = Array(CommandLine.arguments.dropFirst())
+        do {
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            statusMessage = "Quit and reopen Glimpse to apply Screen Recording permission."
+        }
     }
 
     func startRecording() async {
@@ -892,15 +934,88 @@ final class RecordingCoordinator: ObservableObject {
         }
     }
 
+    private func handleScreenRecordingPermissionAction() async {
+        if CGPreflightScreenCaptureAccess() {
+            pendingScreenRecordingRelaunch = false
+            markScreenRecordingAccessPrompted()
+            return
+        }
+
+        let currentState = screenRecordingPermissionState()
+        if currentState == .restartRequired {
+            relaunchForUpdatedPermissions()
+            return
+        }
+
+        markScreenRecordingAccessPrompted()
+
+        // Register the app with TCC / show the system prompt when available.
+        if !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+        }
+
+        if CGPreflightScreenCaptureAccess() {
+            pendingScreenRecordingRelaunch = false
+            return
+        }
+
+        // Grants made in System Settings do not apply to this process until relaunch.
+        openPermissionSettings(for: .screenRecording)
+        pendingScreenRecordingRelaunch = true
+    }
+
+    private func handleSystemAudioPermissionAction() async {
+        guard isSystemAudioAvailable else {
+            return
+        }
+
+        // System audio shares the Screen & System Audio Recording TCC grant.
+        if screenRecordingPermissionState() == .restartRequired {
+            relaunchForUpdatedPermissions()
+            return
+        }
+
+        await handleScreenRecordingPermissionAction()
+    }
+
     private func screenRecordingPermissionState() -> PermissionApprovalState {
-        CGPreflightScreenCaptureAccess() ? .approved : .needsSettings
+        if CGPreflightScreenCaptureAccess() {
+            pendingScreenRecordingRelaunch = false
+            markScreenRecordingAccessPrompted()
+            return .approved
+        }
+
+        // After the user is sent to Settings (or request did not grant in-process),
+        // keep showing relaunch until the next process sees the TCC grant.
+        if pendingScreenRecordingRelaunch {
+            return .restartRequired
+        }
+
+        if UserDefaults.standard.bool(forKey: screenRecordingAccessPromptedKey) {
+            return .needsSettings
+        }
+
+        return .notRequested
     }
 
     private func systemAudioPermissionState(screenState: PermissionApprovalState) -> PermissionApprovalState {
         guard isSystemAudioAvailable else {
             return .unavailable
         }
-        return screenState == .approved ? .approved : .waitingForScreenRecording
+
+        switch screenState {
+        case .approved:
+            return .approved
+        case .restartRequired:
+            // Same TCC grant as screen recording; same relaunch requirement.
+            return .restartRequired
+        case .notRequested, .needsSettings, .restricted, .waitingForScreenRecording, .unavailable:
+            return .waitingForScreenRecording
+        }
+    }
+
+    private func markScreenRecordingAccessPrompted() {
+        UserDefaults.standard.set(true, forKey: screenRecordingAccessPromptedKey)
     }
 
     private func permissionState(for authorizationStatus: AVAuthorizationStatus) -> PermissionApprovalState {
