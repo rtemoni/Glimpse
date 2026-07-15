@@ -3709,7 +3709,7 @@ private struct PermissionOnboardingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Set Up Permissions", systemImage: "checklist")
                     .font(.system(size: 28, weight: .semibold))
-                Text("Grant the required macOS permissions before setting up a recording. Glimpse checks the current permission state each time this window appears and whenever you return from System Settings.")
+                Text("Grant the required macOS permissions before setting up a recording. Camera and Microphone update immediately. Screen Recording and System Audio are applied by macOS only after you relaunch Glimpse.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3738,6 +3738,20 @@ private struct PermissionOnboardingView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .liquidGlassSurface(cornerRadius: 14, interactive: true)
+
+                // Screen Recording / System Audio TCC grants from System Settings only
+                // apply to a new process — always offer relaunch while screen capture is missing.
+                if coordinator.permissionChecklist.contains(where: {
+                    $0.requirement == .screenRecording && !$0.state.isApproved
+                }) {
+                    Button {
+                        coordinator.relaunchForUpdatedPermissions()
+                    } label: {
+                        Label("Relaunch Glimpse", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .keyboardShortcut("r", modifiers: [.command])
+                    .liquidGlassSurface(cornerRadius: 14, interactive: true)
+                }
 
                 Spacer()
 
@@ -3822,6 +3836,8 @@ private struct PermissionChecklistRow: View {
             return "circle"
         case .needsSettings:
             return "gearshape"
+        case .restartRequired:
+            return "arrow.triangle.2.circlepath"
         case .restricted:
             return "lock.fill"
         case .waitingForScreenRecording:
@@ -3832,7 +3848,14 @@ private struct PermissionChecklistRow: View {
     }
 
     private var actionImage: String {
-        item.state == .notRequested ? "hand.tap" : "gearshape"
+        switch item.state {
+        case .notRequested:
+            return "hand.tap"
+        case .restartRequired:
+            return "arrow.triangle.2.circlepath"
+        default:
+            return "gearshape"
+        }
     }
 
     private var statusColor: Color {
@@ -3841,7 +3864,7 @@ private struct PermissionChecklistRow: View {
             return .green
         case .notRequested:
             return .accentColor
-        case .needsSettings:
+        case .needsSettings, .restartRequired:
             return .orange
         case .restricted:
             return .red
