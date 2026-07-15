@@ -31,7 +31,7 @@ enum PermissionRequirement: String, CaseIterable, Identifiable {
         case .microphone:
             return "Required to capture narration."
         case .systemAudio:
-            return "Available through ScreenCaptureKit after screen recording is approved."
+            return "Uses the same System Settings grant as Screen Recording on modern macOS."
         }
     }
 
@@ -53,6 +53,7 @@ enum PermissionApprovalState: Equatable {
     case approved
     case notRequested
     case needsSettings
+    case restartRequired
     case restricted
     case waitingForScreenRecording
     case unavailable
@@ -65,6 +66,8 @@ enum PermissionApprovalState: Equatable {
             return "Not requested"
         case .needsSettings:
             return "Needs Settings"
+        case .restartRequired:
+            return "Relaunch needed"
         case .restricted:
             return "Restricted"
         case .waitingForScreenRecording:
@@ -91,18 +94,28 @@ struct PermissionChecklistItem: Identifiable, Equatable {
     }
 
     var detail: String {
-        switch state {
-        case .approved:
+        switch (requirement, state) {
+        case (_, .approved):
             return "Ready."
-        case .notRequested:
+        case (_, .notRequested):
             return "Grant access when macOS asks."
-        case .needsSettings:
+        case (.screenRecording, .needsSettings):
+            return "Enable Glimpse in System Settings → Privacy & Security → Screen & System Audio Recording, then relaunch Glimpse."
+        case (.systemAudio, .needsSettings):
+            return "Enable Glimpse under Screen & System Audio Recording, then relaunch Glimpse."
+        case (_, .needsSettings):
             return "Enable this app in System Settings, then return here."
-        case .restricted:
+        case (.screenRecording, .restartRequired), (.systemAudio, .restartRequired):
+            return "macOS applies this permission only after a full relaunch. Click Relaunch once the toggle is on."
+        case (_, .restartRequired):
+            return "Relaunch Glimpse to apply the updated permission."
+        case (_, .restricted):
             return "This Mac restricts access for this capability."
-        case .waitingForScreenRecording:
+        case (.systemAudio, .waitingForScreenRecording):
+            return "Approve and relaunch for Screen Recording first."
+        case (_, .waitingForScreenRecording):
             return "Approve Screen Recording first."
-        case .unavailable:
+        case (_, .unavailable):
             return "This macOS version does not support this capture path."
         }
     }
@@ -113,10 +126,10 @@ struct PermissionChecklistItem: Identifiable, Equatable {
             return nil
         case .notRequested:
             return "Allow"
-        case .needsSettings:
+        case .needsSettings, .waitingForScreenRecording:
             return "Open Settings"
-        case .waitingForScreenRecording:
-            return "Open Settings"
+        case .restartRequired:
+            return "Relaunch"
         }
     }
 }
