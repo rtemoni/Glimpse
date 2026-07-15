@@ -2993,7 +2993,7 @@ private struct CaptureTargetCard: View {
             }
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .frame(maxWidth: .infinity)
-            .frame(maxHeight: 136)
+            .layoutPriority(1)
             .clipped()
 
             VStack(alignment: .leading, spacing: 3) {
@@ -3008,6 +3008,7 @@ private struct CaptureTargetCard: View {
                     .truncationMode(.middle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Spacer()
@@ -3016,17 +3017,18 @@ private struct CaptureTargetCard: View {
                     .foregroundStyle(isSelected ? Color.accentColor : Color.red)
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 220, alignment: .topLeading)
+        .padding(12)
+        // minHeight keeps grid cards readable; maxHeight fills the ready-screen strip when a parent height is set.
+        .frame(maxWidth: .infinity, minHeight: 250, maxHeight: .infinity, alignment: .topLeading)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(isSelected ? Color.accentColor.opacity(0.75) : Color.white.opacity(0.10), lineWidth: isSelected ? 2 : 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .task(id: target.id) {
-            previewImage = target.previewImage(maximumSize: CGSize(width: 520, height: 320))
+            previewImage = target.previewImage(maximumSize: CGSize(width: 640, height: 400))
         }
     }
 }
@@ -3040,17 +3042,17 @@ private struct CompactIdleView: View {
 
             VStack(spacing: 12) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 18) {
                         readyHeader
                         readyVisualSources
                         readyAudioSources
                         recordingOptions
                     }
-                    .padding(20)
-                    .frame(maxWidth: 1180, alignment: .topLeading)
+                    .padding(22)
+                    .frame(maxWidth: 1320, alignment: .topLeading)
                     .liquidGlassSurface(cornerRadius: 26)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 14)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .scrollIndicators(.automatic)
@@ -3060,7 +3062,7 @@ private struct CompactIdleView: View {
                     .padding(.bottom, 18)
             }
         }
-        .frame(minWidth: 900, minHeight: 680)
+        .frame(minWidth: 1020, minHeight: 780)
         .task {
             await coordinator.refreshCaptureTargets()
             await coordinator.startSetupPreview()
@@ -3125,15 +3127,28 @@ private struct CompactIdleView: View {
     }
 
     private var readyVisualSources: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ReadyCameraColumn()
-                .environmentObject(coordinator)
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
-                .layoutPriority(0)
-            ReadyScreenColumn()
-                .environmentObject(coordinator)
-                .frame(minWidth: 460, maxWidth: .infinity)
-                .layoutPriority(1)
+        // Flexible columns so camera + screen stay inside the surface without
+        // rigid min-widths forcing horizontal overflow into each other.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                ReadyCameraColumn()
+                    .environmentObject(coordinator)
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(0)
+                ReadyScreenColumn()
+                    .environmentObject(coordinator)
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(1)
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                ReadyCameraColumn()
+                    .environmentObject(coordinator)
+                    .frame(maxWidth: .infinity)
+                ReadyScreenColumn()
+                    .environmentObject(coordinator)
+                    .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -3193,7 +3208,7 @@ private struct CompactIdleView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .tint(.red)
-        .frame(maxWidth: 1180)
+        .frame(maxWidth: 1320)
         .disabled(!coordinator.canStart)
         .keyboardShortcut("r", modifiers: [.command])
         .accessibilityHint("Starts recording the selected display or window")
@@ -3225,7 +3240,7 @@ private struct ReadyVisualSourceCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
                     .font(.system(size: 19, weight: .semibold))
@@ -3243,14 +3258,17 @@ private struct ReadyVisualSourceCard<Content: View>: View {
             Divider()
 
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 410, maxHeight: 410, alignment: .topLeading)
+        .padding(16)
+        // Grow with content instead of a fixed max height that clipped previews/controls.
+        .frame(maxWidth: .infinity, minHeight: 480, alignment: .topLeading)
         .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(.white.opacity(0.10), lineWidth: 1)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -3290,28 +3308,34 @@ private struct ReadyCameraPreview: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black.opacity(0.24))
+        GeometryReader { proxy in
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.black.opacity(0.24))
 
-            if !coordinator.settings.overlay.isEnabled {
-                previewPlaceholder(systemImage: "video.slash", text: "Camera off")
-            } else if let image = coordinator.cameraPreviewImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .accessibilityLabel("Live camera preview")
-            } else if coordinator.isSetupPreviewStarting {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("Starting camera preview")
-            } else {
-                previewPlaceholder(systemImage: "video", text: "Waiting for camera")
+                if !coordinator.settings.overlay.isEnabled {
+                    previewPlaceholder(systemImage: "video.slash", text: "Camera off")
+                } else if let image = coordinator.cameraPreviewImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                        .accessibilityLabel("Live camera preview")
+                } else if coordinator.isSetupPreviewStarting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Starting camera preview")
+                } else {
+                    previewPlaceholder(systemImage: "video", text: "Waiting for camera")
+                }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(minHeight: 240, idealHeight: 280, maxHeight: 340)
     }
 
     private func previewPlaceholder(systemImage: String, text: String) -> some View {
@@ -3447,6 +3471,9 @@ private struct ReadyScreenColumn: View {
 private struct ReadyCaptureTargetSelector: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
+    private let previewStripHeight: CGFloat = 300
+    private let cardWidth: CGFloat = 268
+
     var body: some View {
         Group {
             if coordinator.isLoadingCaptureTargets {
@@ -3457,7 +3484,7 @@ private struct ReadyCaptureTargetSelector: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+                .frame(maxWidth: .infinity, minHeight: previewStripHeight, alignment: .center)
             } else if coordinator.captureTargets.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "display.slash")
@@ -3469,11 +3496,11 @@ private struct ReadyCaptureTargetSelector: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 236, alignment: .center)
+                .frame(maxWidth: .infinity, minHeight: previewStripHeight, alignment: .center)
                 .background(.black.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 ScrollView(.horizontal, showsIndicators: true) {
-                    LazyHStack(spacing: 12) {
+                    LazyHStack(spacing: 14) {
                         ForEach(coordinator.captureTargets) { target in
                             let isSelected = target.id == coordinator.selectedCaptureTarget?.id
 
@@ -3488,7 +3515,7 @@ private struct ReadyCaptureTargetSelector: View {
                                     actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
                                     isSelected: isSelected
                                 )
-                                .frame(width: 238)
+                                .frame(width: cardWidth, height: previewStripHeight - 8)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(target.title), \(target.subtitle)")
@@ -3496,9 +3523,10 @@ private struct ReadyCaptureTargetSelector: View {
                             .accessibilityHint("Select this capture target")
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                 }
-                .frame(height: 236)
+                .frame(height: previewStripHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
     }
@@ -4605,7 +4633,7 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 540, height: 480)
         case .splash:
-            return NSSize(width: 900, height: 680)
+            return NSSize(width: 1020, height: 780)
         case .editor:
             return NSSize(width: 880, height: 620)
         case .onboarding:
@@ -4620,7 +4648,8 @@ private enum WindowPresentationMode: Equatable {
         case .getStarted:
             return NSSize(width: 640, height: 540)
         case .splash:
-            return NSSize(width: 1120, height: 780)
+            // Larger default so camera + screen preview cards fit without clipping.
+            return NSSize(width: 1240, height: 900)
         case .editor:
             return NSSize(width: 1120, height: 720)
         case .onboarding:
