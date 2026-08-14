@@ -22,7 +22,9 @@ jobs:
     env:
       APP_NAME: Glimpse
       PRODUCT_NAME: Glimpse
-      BUNDLE_IDENTIFIER: ${{ vars.BUNDLE_IDENTIFIER || 'com.rtemoni.Glimpse' }}
+      BUNDLE_IDENTIFIER: com.rtemoni.Glimpse
+      EXPECTED_UPDATE_BUNDLE_IDENTIFIER: com.rtemoni.Glimpse
+      REQUIRE_DEVELOPER_ID: "1"
       RELEASE_BRANCH: main
       SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}

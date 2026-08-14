@@ -94,9 +94,8 @@ Optional secrets for signed and notarized tag releases:
 Optional:
 
 - `KEYCHAIN_PASSWORD`
-- Repository variable `BUNDLE_IDENTIFIER`
 
-`SPARKLE_ED_PRIVATE_KEY` is mandatory for tag releases because the app rejects unsigned update archives and feeds. Developer ID and notarization secrets remain optional; without them, the workflow can still build an ad-hoc signed DMG for early testing.
+`SPARKLE_ED_PRIVATE_KEY` and the Developer ID signing credentials are mandatory for update releases. A release may not fall back to an ad-hoc identity because a stable Developer ID designated requirement is what lets macOS preserve the user's privacy grants across app versions.
 
 ## Updates
 
@@ -106,7 +105,7 @@ Glimpse uses a signed Sparkle appcast hosted on the release branch:
 https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/appcast.xml
 ```
 
-The app checks automatically once per day and also exposes **Check for Updates...** in the app menu and Settings. It downloads the GitHub Release DMG, verifies the signed feed, Ed25519 archive signature, and Apple code signature, then atomically replaces the current app. Users can install and relaunch immediately or let a downloaded update install when Glimpse quits. The legacy `updates/latest.json` manifest is still published for builds that predate the in-app updater.
+The app checks automatically once per day and also exposes **Check for Updates...** in the app menu and Settings. Download progress is shown from 0–99%; after verification and extraction, the action becomes **Update** and offers **Update Now** or **Next Launch**. Sparkle verifies the signed feed, Ed25519 archive signature, and Apple code signature, then atomically replaces the current app. Recorder and export settings live outside the app bundle with a rolling valid backup and a pre-update snapshot. The legacy `updates/latest.json` manifest is still published for builds that predate the in-app updater.
 
 The first release containing Sparkle must still be installed from its DMG once. After that migration release, subsequent signed releases update in place without reinstalling a DMG.
 

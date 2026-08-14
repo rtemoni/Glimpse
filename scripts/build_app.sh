@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_NAME="${APP_NAME:-Glimpse}"
 PRODUCT_NAME="${PRODUCT_NAME:-Glimpse}"
 BUNDLE_IDENTIFIER="${BUNDLE_IDENTIFIER:-com.rtemoni.Glimpse}"
+EXPECTED_UPDATE_BUNDLE_IDENTIFIER="${EXPECTED_UPDATE_BUNDLE_IDENTIFIER:-com.rtemoni.Glimpse}"
 CONFIGURATION="${CONFIGURATION:-release}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/.build/distribution}"
 INFO_PLIST_SOURCE="${INFO_PLIST_SOURCE:-$REPO_ROOT/Info.plist}"
@@ -15,7 +16,22 @@ RESOURCE_BUNDLE_NAME="${RESOURCE_BUNDLE_NAME:-Glimpse_Glimpse.bundle}"
 SPARKLE_FRAMEWORK_SOURCE="${SPARKLE_FRAMEWORK_SOURCE:-$REPO_ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-13.0}"
 SKIP_CODESIGN="${SKIP_CODESIGN:-0}"
-RESET_SCREEN_CAPTURE_TCC="${RESET_SCREEN_CAPTURE_TCC:-1}"
+RESET_SCREEN_CAPTURE_TCC="${RESET_SCREEN_CAPTURE_TCC:-0}"
+
+if [[ "$BUNDLE_IDENTIFIER" != "$EXPECTED_UPDATE_BUNDLE_IDENTIFIER" && "${ALLOW_UPDATE_IDENTITY_CHANGE:-0}" != "1" ]]; then
+    echo "Refusing to change bundle identifier from $EXPECTED_UPDATE_BUNDLE_IDENTIFIER to $BUNDLE_IDENTIFIER." >&2
+    echo "Changing update identity resets macOS privacy grants and separates user defaults." >&2
+    exit 1
+fi
+
+if [[ "${REQUIRE_DEVELOPER_ID:-0}" == "1" && -z "${SIGNING_IDENTITY:-}" ]]; then
+    echo "A stable Developer ID signing identity is required for update releases." >&2
+    exit 1
+fi
+if [[ "${REQUIRE_DEVELOPER_ID:-0}" == "1" && -z "${APPLE_TEAM_ID:-}" ]]; then
+    echo "APPLE_TEAM_ID is required to verify update release identity." >&2
+    exit 1
+fi
 
 if [[ -z "${VERSION:-}" ]]; then
     if git -C "$REPO_ROOT" describe --tags --abbrev=0 >/dev/null 2>&1; then
@@ -145,6 +161,25 @@ if [[ "$SKIP_CODESIGN" != "1" ]]; then
             "$APP_DIR"
     fi
     codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
+    if [[ "${REQUIRE_DEVELOPER_ID:-0}" == "1" ]]; then
+        SIGNATURE_DETAILS="$(codesign --display --verbose=4 "$APP_DIR" 2>&1)"
+        ACTUAL_TEAM_ID="$(sed -n 's/^TeamIdentifier=//p' <<< "$SIGNATURE_DETAILS")"
+        ACTUAL_SIGNING_IDENTIFIER="$(sed -n 's/^Identifier=//p' <<< "$SIGNATURE_DETAILS")"
+
+        if [[ -z "$ACTUAL_TEAM_ID" || "$ACTUAL_TEAM_ID" == "not set" ]]; then
+            echo "Release app does not have a stable Developer ID team identifier." >&2
+            exit 1
+        fi
+        if [[ -n "${APPLE_TEAM_ID:-}" && "$ACTUAL_TEAM_ID" != "$APPLE_TEAM_ID" ]]; then
+            echo "Signed app team $ACTUAL_TEAM_ID does not match APPLE_TEAM_ID $APPLE_TEAM_ID." >&2
+            exit 1
+        fi
+        if [[ "$ACTUAL_SIGNING_IDENTIFIER" != "$EXPECTED_UPDATE_BUNDLE_IDENTIFIER" ]]; then
+            echo "Signed app identifier $ACTUAL_SIGNING_IDENTIFIER does not match $EXPECTED_UPDATE_BUNDLE_IDENTIFIER." >&2
+            exit 1
+        fi
+    fi
 fi
 
 if [[ "$RESET_SCREEN_CAPTURE_TCC" == "1" ]]; then

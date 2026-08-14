@@ -29,7 +29,7 @@ public enum RecordingState: String, CaseIterable, Equatable, Sendable {
     }
 }
 
-public enum RecorderFileFormat: String, CaseIterable, Identifiable, Sendable {
+public enum RecorderFileFormat: String, CaseIterable, Codable, Identifiable, Sendable {
     case mov
     case mp4
 
@@ -47,7 +47,7 @@ public enum RecorderFileFormat: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum OverlaySizePreset: String, CaseIterable, Identifiable, Sendable {
+public enum OverlaySizePreset: String, CaseIterable, Codable, Identifiable, Sendable {
     case small
     case medium
     case large
@@ -77,7 +77,7 @@ public enum OverlaySizePreset: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum OverlayPosition: String, CaseIterable, Identifiable, Sendable {
+public enum OverlayPosition: String, CaseIterable, Codable, Identifiable, Sendable {
     case bottomLeft
     case topLeft
     case topRight
@@ -105,7 +105,7 @@ public enum OverlayPosition: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public enum OverlayShape: String, CaseIterable, Identifiable, Sendable {
+public enum OverlayShape: String, CaseIterable, Codable, Identifiable, Sendable {
     case rectangle
     case square
     case circle
@@ -149,7 +149,7 @@ public struct PixelRect: Equatable, Sendable {
     }
 }
 
-public struct OverlaySettings: Equatable, Sendable {
+public struct OverlaySettings: Codable, Equatable, Sendable {
     public var isEnabled: Bool
     public var sizePreset: OverlaySizePreset
     public var position: OverlayPosition
@@ -186,7 +186,7 @@ public struct OverlaySettings: Equatable, Sendable {
     }
 }
 
-public struct RecorderSettings: Equatable, Sendable {
+public struct RecorderSettings: Codable, Equatable, Sendable {
     public var outputDirectory: URL
     public var fileNamePrefix: String
     public var fileFormat: RecorderFileFormat

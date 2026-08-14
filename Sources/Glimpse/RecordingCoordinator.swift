@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import AVFoundation
+import Combine
 import CoreGraphics
 import GlimpseCore
 import SwiftUI
@@ -8,7 +9,7 @@ import SwiftUI
 @MainActor
 final class RecordingCoordinator: ObservableObject {
     @Published var state: RecordingState = .idle
-    @Published var settings = RecorderSettings()
+    @Published var settings: RecorderSettings
     @Published var availableCameras: [SourceDevice] = []
     @Published var availableMicrophones: [SourceDevice] = []
     @Published var statusMessage: String?
@@ -21,7 +22,7 @@ final class RecordingCoordinator: ObservableObject {
     @Published private(set) var permissionChecklist: [PermissionChecklistItem] = []
     @Published var recordingSummary: RecordingSummary?
     @Published var editingSession: EditingSession?
-    @Published var exportSettings = ExportSettings()
+    @Published var exportSettings: ExportSettings
     @Published private(set) var exportedVideos: [ExportedVideo] = []
     @Published private(set) var isExporting = false
     @Published private(set) var exportProgress: Double = 0
@@ -42,6 +43,8 @@ final class RecordingCoordinator: ObservableObject {
     private let mediaPipeline = CaptureMediaPipeline()
     private let recordingLeadTrimmer = RecordingLeadTrimmer()
     private let videoExporter = VideoExporter()
+    private let settingsStore: RecorderSettingsStore
+    private var settingsCancellables: Set<AnyCancellable> = []
     private var elapsedTimer: Timer?
     private var permissionTimer: Timer?
     private var recordingStartedAt: Date?
@@ -55,10 +58,15 @@ final class RecordingCoordinator: ObservableObject {
     /// macOS only applies that TCC grant to a new process, so onboarding must offer relaunch.
     private var pendingScreenRecordingRelaunch = false
 
-    init() {
+    init(settingsStore: RecorderSettingsStore = RecorderSettingsStore()) {
+        self.settingsStore = settingsStore
+        let persistedSettings = settingsStore.load()
+        settings = persistedSettings.recorderSettings
+        exportSettings = persistedSettings.exportSettings
         isSystemAudioAvailable = AudioCaptureService.isSystemAudioCaptureSupported
         refreshPermissionStatuses()
         wireCaptureCallbacks()
+        beginPersistingSettings()
     }
 
     deinit {
@@ -140,6 +148,46 @@ final class RecordingCoordinator: ObservableObject {
 
     func openOutputDirectory() {
         NSWorkspace.shared.open(settings.outputDirectory)
+    }
+
+    /// Flushes current configuration and creates a known-good snapshot before
+    /// Sparkle replaces the application bundle.
+    func backupSettingsForUpdate() throws {
+        try settingsStore.createPreUpdateBackup(of: settingsSnapshot)
+    }
+
+    private func beginPersistingSettings() {
+        Publishers.CombineLatest($settings, $exportSettings)
+            .dropFirst()
+            .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
+            .sink { [weak self] recorderSettings, exportSettings in
+                guard let self else { return }
+                do {
+                    try self.settingsStore.save(
+                        RecorderSettingsStore.Snapshot(
+                            recorderSettings: recorderSettings,
+                            exportSettings: exportSettings
+                        )
+                    )
+                } catch {
+                    self.statusMessage = "Unable to save settings: \(error.localizedDescription)"
+                }
+            }
+            .store(in: &settingsCancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                try? self.settingsStore.save(self.settingsSnapshot)
+            }
+            .store(in: &settingsCancellables)
+    }
+
+    private var settingsSnapshot: RecorderSettingsStore.Snapshot {
+        RecorderSettingsStore.Snapshot(
+            recorderSettings: settings,
+            exportSettings: exportSettings
+        )
     }
 
     func startPermissionMonitoring() {
