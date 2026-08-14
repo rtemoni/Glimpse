@@ -9,6 +9,8 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
     private weak var coordinator: RecordingCoordinator?
     private var statusItem: NSStatusItem?
     private var cancellables: Set<AnyCancellable> = []
+    private var pulseTimer: Timer?
+    private var isPulseBright = true
 
     func attach(to coordinator: RecordingCoordinator) {
         guard self.coordinator !== coordinator else {
@@ -31,6 +33,7 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
     }
 
     deinit {
+        pulseTimer?.invalidate()
         if let statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
@@ -43,21 +46,27 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         }
 
         let statusItem = ensureStatusItem()
+        updatePulse(for: coordinator.state)
         if let button = statusItem.button {
             button.image = statusImage(for: coordinator)
             button.imagePosition = .imageLeading
-            button.contentTintColor = .systemRed
+            button.contentTintColor = statusTintColor(for: coordinator)
+            button.alphaValue = coordinator.state == .recording && !isPulseBright ? 0.45 : 1
             button.attributedTitle = NSAttributedString(
                 string: coordinator.menuBarElapsedTimeLabel,
                 attributes: [
-                    .foregroundColor: NSColor.systemRed,
+                    .foregroundColor: statusTintColor(for: coordinator),
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
                 ]
             )
-            button.toolTip = statusTitle(for: coordinator)
+            button.target = self
+            button.action = #selector(stopRecording)
+            button.sendAction(on: [.leftMouseUp])
+            button.toolTip = "\(statusTitle(for: coordinator)) — click to stop"
             button.setAccessibilityLabel(statusTitle(for: coordinator))
+            button.setAccessibilityHelp("Stops the recording and returns to the Glimpse editor")
         }
-        statusItem.menu = makeMenu(for: coordinator)
+        statusItem.menu = nil
     }
 
     private func ensureStatusItem() -> NSStatusItem {
@@ -71,39 +80,13 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
     }
 
     private func removeStatusItem() {
+        stopPulse()
         guard let statusItem else {
             return
         }
 
         NSStatusBar.system.removeStatusItem(statusItem)
         self.statusItem = nil
-    }
-
-    private func makeMenu(for coordinator: RecordingCoordinator) -> NSMenu {
-        let menu = NSMenu()
-
-        let status = NSMenuItem(title: statusTitle(for: coordinator), action: nil, keyEquivalent: "")
-        status.image = statusImage(for: coordinator)
-        status.isEnabled = false
-        menu.addItem(status)
-        menu.addItem(.separator())
-
-        let show = NSMenuItem(title: "Show Glimpse", action: #selector(showGlimpse), keyEquivalent: "")
-        show.target = self
-        menu.addItem(show)
-
-        let pauseTitle = coordinator.state == .paused ? "Resume" : "Pause"
-        let pause = NSMenuItem(title: pauseTitle, action: #selector(togglePause), keyEquivalent: "")
-        pause.target = self
-        pause.isEnabled = coordinator.canPauseOrResume
-        menu.addItem(pause)
-
-        let stop = NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: "")
-        stop.target = self
-        stop.isEnabled = coordinator.canStop
-        menu.addItem(stop)
-
-        return menu
     }
 
     private func statusTitle(for coordinator: RecordingCoordinator) -> String {
@@ -127,18 +110,54 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         return image
     }
 
-    @objc private func showGlimpse() {
-        GlimpseWindowPresenter.showMainWindow()
+    private func statusTintColor(for coordinator: RecordingCoordinator) -> NSColor {
+        switch coordinator.state {
+        case .paused:
+            return .systemOrange
+        case .stopping:
+            return .secondaryLabelColor
+        default:
+            return .systemRed
+        }
     }
 
-    @objc private func togglePause() {
-        coordinator?.togglePause()
+    private func updatePulse(for state: RecordingState) {
+        guard state == .recording else {
+            stopPulse()
+            return
+        }
+        guard pulseTimer == nil else {
+            return
+        }
+
+        let timer = Timer(timeInterval: 0.75, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.coordinator?.state == .recording else {
+                    self?.stopPulse()
+                    return
+                }
+                self.isPulseBright.toggle()
+                self.refresh()
+            }
+        }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        pulseTimer = timer
+    }
+
+    private func stopPulse() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        isPulseBright = true
+        statusItem?.button?.alphaValue = 1
     }
 
     @objc private func stopRecording() {
+        guard coordinator?.canStop == true else {
+            return
+        }
         Task { @MainActor in
             await coordinator?.stopRecording()
-            GlimpseWindowPresenter.showMainWindow()
         }
     }
 }
