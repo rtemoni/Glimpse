@@ -115,6 +115,31 @@ jobs:
       - name: Verify DMG layout
         run: scripts/verify_dmg.sh "${{ steps.dmg.outputs.dmg_path }}"
 
+      - name: Sign Sparkle update artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        id: sparkle
+        shell: bash
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$SPARKLE_ED_PRIVATE_KEY" ]]; then
+            echo "SPARKLE_ED_PRIVATE_KEY is required for tag releases." >&2
+            exit 1
+          fi
+
+          sign_tool=".build/artifacts/sparkle/Sparkle/bin/sign_update"
+          dmg_path="${{ steps.dmg.outputs.dmg_path }}"
+          signature_fragment="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$sign_tool" --ed-key-file - "$dmg_path")"
+          ed_signature="$(sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/' <<< "$signature_fragment")"
+          archive_length="$(sed -E 's/.*length="([0-9]+)".*/\1/' <<< "$signature_fragment")"
+
+          if [[ -z "$ed_signature" || -z "$archive_length" ]]; then
+            echo "Sparkle did not return a valid update signature." >&2
+            exit 1
+          fi
+          echo "ed_signature=$ed_signature" >> "$GITHUB_OUTPUT"
+          echo "archive_length=$archive_length" >> "$GITHUB_OUTPUT"
+
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v7
         with:
@@ -140,12 +165,17 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           version="${{ steps.version.outputs.version }}"
+          build="${{ github.run_number }}"
           tag="$GITHUB_REF_NAME"
           release_branch="$RELEASE_BRANCH"
           release_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/$tag"
           download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/Glimpse-$version.dmg"
+          ed_signature="${{ steps.sparkle.outputs.ed_signature }}"
+          archive_length="${{ steps.sparkle.outputs.archive_length }}"
+          published_at="$(date -u '+%a, %d %b %Y %H:%M:%S %z')"
 
           git fetch origin "$release_branch"
           git switch "$release_branch"
@@ -161,13 +191,45 @@ jobs:
             "minimumSystemVersion": "13.0",
             "downloadURL": "$download_url",
             "releaseNotesURL": "$release_url",
+            "edSignature": "$ed_signature",
+            "length": $archive_length,
             "branch": "$release_branch"
           }
           JSON
 
+          cat > updates/appcast.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Glimpse Updates</title>
+              <link>https://github.com/${GITHUB_REPOSITORY}/releases</link>
+              <description>Signed Glimpse releases published from GitHub.</description>
+              <language>en</language>
+              <item>
+                <title>Glimpse $version</title>
+                <link>$release_url</link>
+                <sparkle:version>$build</sparkle:version>
+                <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>13.0.0</sparkle:minimumSystemVersion>
+                <sparkle:releaseNotesLink>$release_url</sparkle:releaseNotesLink>
+                <pubDate>$published_at</pubDate>
+                <enclosure
+                  url="$download_url"
+                  sparkle:edSignature="$ed_signature"
+                  length="$archive_length"
+                  type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          XML
+
+          sign_tool=".build/artifacts/sparkle/Sparkle/bin/sign_update"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$sign_tool" --ed-key-file - updates/appcast.xml
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$sign_tool" --verify --ed-key-file - updates/appcast.xml
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates/latest.json
+          git add updates/latest.json updates/appcast.xml
           if git diff --cached --quiet; then
             echo "Update manifest is already current."
           else

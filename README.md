@@ -36,7 +36,8 @@ scripts/create_dmg.sh
 - `Contents/MacOS/Glimpse`
 - `Contents/Resources/Assets.car` with default, dark, and tintable Liquid Glass icon appearances when Xcode 26 is available
 - `Contents/Resources/AppIcon.icns` with 16–1024 px fallback artwork for macOS 13–25 and command-line launches
-- `Contents/Frameworks`, `Contents/PlugIns`, and `Contents/SharedSupport` placeholders for future bundled dependencies
+- `Contents/Frameworks/Sparkle.framework` for signed, atomic in-app updates
+- `Contents/PlugIns` and `Contents/SharedSupport` placeholders for future bundled dependencies
 
 Set `SIGNING_IDENTITY` to sign with a Developer ID Application certificate:
 
@@ -88,23 +89,26 @@ Optional secrets for signed and notarized tag releases:
 - `APPLE_ID`
 - `APPLE_TEAM_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`
+- `SPARKLE_ED_PRIVATE_KEY`
 
 Optional:
 
 - `KEYCHAIN_PASSWORD`
 - Repository variable `BUNDLE_IDENTIFIER`
 
-If signing secrets are not configured, the workflow still publishes an ad-hoc signed DMG so early GitHub Releases can be tested.
+`SPARKLE_ED_PRIVATE_KEY` is mandatory for tag releases because the app rejects unsigned update archives and feeds. Developer ID and notarization secrets remain optional; without them, the workflow can still build an ad-hoc signed DMG for early testing.
 
 ## Updates
 
-Glimpse checks the branch-hosted update manifest at:
+Glimpse uses a signed Sparkle appcast hosted on the release branch:
 
 ```text
-https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/latest.json
+https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/appcast.xml
 ```
 
-The app checks automatically about once per day and also exposes **Check for Updates...** in the app menu and Settings. Tag releases update `updates/latest.json` on `main` so installed apps can discover the newest DMG.
+The app checks automatically once per day and also exposes **Check for Updates...** in the app menu and Settings. It downloads the GitHub Release DMG, verifies the signed feed, Ed25519 archive signature, and Apple code signature, then atomically replaces the current app. Users can install and relaunch immediately or let a downloaded update install when Glimpse quits. The legacy `updates/latest.json` manifest is still published for builds that predate the in-app updater.
+
+The first release containing Sparkle must still be installed from its DMG once. After that migration release, subsequent signed releases update in place without reinstalling a DMG.
 
 ## Privacy
 

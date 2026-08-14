@@ -7,6 +7,7 @@ struct GlimpseApp: App {
     @NSApplicationDelegateAdaptor(GlimpseAppDelegate.self) private var appDelegate
     @StateObject private var coordinator = RecordingCoordinator()
     @StateObject private var statusItemController = RecordingStatusItemController()
+    @StateObject private var updateController = AppUpdateController()
 
     init() {
         // Application bundles resolve AppIcon from Assets.car so macOS can apply
@@ -23,6 +24,7 @@ struct GlimpseApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(coordinator)
+                .environmentObject(updateController)
                 .onAppear {
                     statusItemController.attach(to: coordinator)
                 }
@@ -33,10 +35,9 @@ struct GlimpseApp: App {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates...") {
-                    Task {
-                        await coordinator.checkForUpdates(userInitiated: true)
-                    }
+                    updateController.checkForUpdates()
                 }
+                .disabled(!updateController.canCheckForUpdates)
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             }
         }

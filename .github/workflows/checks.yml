@@ -28,3 +28,5 @@ jobs:
         run: |
           python3 -m json.tool updates/latest.json >/dev/null
           test "$(python3 -c 'import json; print(json.load(open("updates/latest.json"))["branch"])')" = "main"
+          xmllint --noout updates/appcast.xml
+          grep -q 'sparkle-signatures' updates/appcast.xml
