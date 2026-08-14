@@ -1,5 +1,4 @@
 #if os(macOS)
-import AppKit
 import CoreImage
 import CoreMedia
 import CoreVideo
@@ -7,19 +6,56 @@ import Foundation
 import GlimpseCore
 
 final class VideoCompositor {
-    private let context = CIContext(options: nil)
+    private let context = CIContext(options: [.cacheIntermediates: false])
     private var frameSynchronizer = FrameSynchronizer<CapturedVideoFrame>()
+    private var outputPool: CVPixelBufferPool?
+    private var outputPoolSize = CGSize.zero
+
+    func reset() {
+        frameSynchronizer = FrameSynchronizer<CapturedVideoFrame>()
+    }
 
     func updateCameraFrame(_ frame: CapturedVideoFrame) {
         frameSynchronizer.appendCameraFrame(TimedFrame(timestamp: frame.timestamp.seconds, payload: frame))
     }
 
     func compose(screenFrame: CapturedVideoFrame, settings: OverlaySettings) -> CVPixelBuffer? {
+        guard let composed = compositedImage(screenFrame: screenFrame, settings: settings) else {
+            return screenFrame.pixelBuffer
+        }
+
+        let width = CVPixelBufferGetWidth(screenFrame.pixelBuffer)
+        let height = CVPixelBufferGetHeight(screenFrame.pixelBuffer)
+        guard let outputBuffer = makePixelBuffer(width: width, height: height) else {
+            return nil
+        }
+        context.render(composed, to: outputBuffer)
+        return outputBuffer
+    }
+
+    func makeCompositedPreviewImage(
+        screenFrame: CapturedVideoFrame,
+        settings: OverlaySettings,
+        maximumSize: CGSize
+    ) -> CGImage? {
+        let image = compositedImage(screenFrame: screenFrame, settings: settings)
+            ?? CIImage(cvPixelBuffer: screenFrame.pixelBuffer)
+        return makePreviewImage(from: image, maximumSize: maximumSize)
+    }
+
+    func makePreviewImage(from pixelBuffer: CVPixelBuffer, maximumSize: CGSize) -> CGImage? {
+        makePreviewImage(from: CIImage(cvPixelBuffer: pixelBuffer), maximumSize: maximumSize)
+    }
+
+    private func compositedImage(
+        screenFrame: CapturedVideoFrame,
+        settings: OverlaySettings
+    ) -> CIImage? {
         guard let cameraFrame = (
             frameSynchronizer.frame(forScreenTimestamp: screenFrame.timestamp.seconds)
                 ?? frameSynchronizer.latestFrame()
         )?.payload else {
-            return screenFrame.pixelBuffer
+            return nil
         }
 
         let screenSize = PixelSize(
@@ -35,7 +71,7 @@ final class VideoCompositor {
             camera: cameraSize,
             settings: settings
         ) else {
-            return screenFrame.pixelBuffer
+            return nil
         }
 
         let outputRect = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height)
@@ -76,22 +112,30 @@ final class VideoCompositor {
             )
         }
 
-        guard let outputBuffer = makePixelBuffer(width: Int(screenSize.width), height: Int(screenSize.height)) else {
-            return nil
-        }
-        context.render(composed, to: outputBuffer)
-        return outputBuffer
+        return composed
     }
 
-    func makePreviewImage(from pixelBuffer: CVPixelBuffer) -> NSImage? {
-        let image = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let cgImage = context.createCGImage(image, from: image.extent) else {
+    private func makePreviewImage(from image: CIImage, maximumSize: CGSize) -> CGImage? {
+        let sourceExtent = image.extent
+        guard sourceExtent.width > 0, sourceExtent.height > 0 else {
             return nil
         }
-        return NSImage(
-            cgImage: cgImage,
-            size: NSSize(width: cgImage.width, height: cgImage.height)
+
+        let scale = min(
+            1,
+            min(
+                max(1, maximumSize.width) / sourceExtent.width,
+                max(1, maximumSize.height) / sourceExtent.height
+            )
         )
+        let normalized = image.transformed(
+            by: CGAffineTransform(
+                translationX: -sourceExtent.origin.x,
+                y: -sourceExtent.origin.y
+            )
+        )
+        let scaled = normalized.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        return context.createCGImage(scaled, from: scaled.extent.integral)
     }
 
     private func aspectFill(_ image: CIImage, into targetRect: CGRect) -> CIImage {
@@ -176,21 +220,41 @@ final class VideoCompositor {
     }
 
     private func makePixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
+        let requestedSize = CGSize(width: width, height: height)
+        if outputPool == nil || outputPoolSize != requestedSize {
+            outputPool = makePixelBufferPool(width: width, height: height)
+            outputPoolSize = requestedSize
+        }
+
         var pixelBuffer: CVPixelBuffer?
+        guard let outputPool,
+              CVPixelBufferPoolCreatePixelBuffer(
+                kCFAllocatorDefault,
+                outputPool,
+                &pixelBuffer
+              ) == kCVReturnSuccess else {
+            return nil
+        }
+        return pixelBuffer
+    }
+
+    private func makePixelBufferPool(width: Int, height: Int) -> CVPixelBufferPool? {
+        var pool: CVPixelBufferPool?
         let attributes: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferCGImageCompatibilityKey as String: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]
         ]
-        CVPixelBufferCreate(
+        CVPixelBufferPoolCreate(
             kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferPoolMinimumBufferCountKey as String: 4] as CFDictionary,
             attributes as CFDictionary,
-            &pixelBuffer
+            &pool
         )
-        return pixelBuffer
+        return pool
     }
 }
 #endif

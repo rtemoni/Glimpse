@@ -19,12 +19,8 @@ final class RecordingCoordinator: ObservableObject {
     @Published var settings = RecorderSettings()
     @Published var availableCameras: [SourceDevice] = []
     @Published var availableMicrophones: [SourceDevice] = []
-    @Published var previewImage: NSImage?
-    @Published private(set) var cameraPreviewImage: NSImage?
     @Published var statusMessage: String?
     @Published var errorMessage: String?
-    @Published var microphoneLevel: Double = 0
-    @Published private(set) var systemAudioLevel: Double = 0
     @Published private(set) var elapsedSeconds: Int = 0
     @Published var isSystemAudioAvailable = true
     @Published private(set) var isSetupPreviewActive = false
@@ -45,12 +41,16 @@ final class RecordingCoordinator: ObservableObject {
     @Published private(set) var updateStatusMessage: String?
     @Published var updateAlert: UpdateAlert?
 
+    let screenPreview = PreviewFrameStore()
+    let cameraPreview = PreviewFrameStore()
+    let microphoneMeter = AudioMeterStore()
+    let systemAudioMeter = AudioMeterStore()
+
     private var stateMachine = RecordingStateMachine()
     private let screenCapture = ScreenCaptureService()
     private let cameraCapture = CameraCaptureService()
     private let audioCapture = AudioCaptureService()
-    private let compositor = VideoCompositor()
-    private let muxer = Muxer()
+    private let mediaPipeline = CaptureMediaPipeline()
     private let recordingLeadTrimmer = RecordingLeadTrimmer()
     private let videoExporter = VideoExporter()
     private let updateChecker = GitHubUpdateChecker()
@@ -62,9 +62,6 @@ final class RecordingCoordinator: ObservableObject {
     private var activeCaptureTargetKind: RecordingCaptureTargetKind = .display
     private var setupPreviewStartID: UUID?
     private var setupPreviewStartTask: Task<Void, Never>?
-    private var lastCameraPreviewTimestamp = -Double.infinity
-    private var lastMicrophoneLevelUpdate = -Double.infinity
-    private var lastSystemAudioLevelUpdate = -Double.infinity
     private let lastAutomaticUpdateCheckKey = "Glimpse.lastAutomaticUpdateCheck"
     private let screenRecordingAccessPromptedKey = "Glimpse.screenRecordingAccessPrompted"
     /// Set after we send the user to Screen Recording settings (or a non-granted request).
@@ -116,7 +113,7 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     var shouldShowCompactIdle: Bool {
-        state == .idle && previewImage == nil && statusMessage == nil && recordingSummary == nil
+        state == .idle && statusMessage == nil && recordingSummary == nil
     }
 
     var elapsedTimeLabel: String {
@@ -343,7 +340,7 @@ final class RecordingCoordinator: ObservableObject {
         }
 
         guard CGPreflightScreenCaptureAccess() else {
-            previewImage = nil
+            screenPreview.clear()
             statusMessage = "Enable Screen Recording to preview setup"
             refreshPermissionStatuses()
             return
@@ -427,11 +424,17 @@ final class RecordingCoordinator: ObservableObject {
                     previewStatus = "Previewing video; audio monitor unavailable"
                 }
             }
+            await mediaPipeline.startPreview(
+                overlay: settings.overlay,
+                microphoneEnabled: isAudioMonitorPrepared && includeMicrophone,
+                systemAudioEnabled: isAudioMonitorPrepared && audioCapture.isSystemAudioActive
+            )
             try Task.checkCancellation()
             guard setupPreviewStartID == startID, state == .idle else {
                 await screenCapture.stop()
                 cameraCapture.stop()
                 await audioCapture.stop()
+                await mediaPipeline.stopPreview()
                 return
             }
 
@@ -441,6 +444,7 @@ final class RecordingCoordinator: ObservableObject {
                 await screenCapture.stop()
                 cameraCapture.stop()
                 await audioCapture.stop()
+                await mediaPipeline.stopPreview()
                 return
             }
             if includeCamera {
@@ -461,6 +465,7 @@ final class RecordingCoordinator: ObservableObject {
                 await screenCapture.stop()
                 cameraCapture.stop()
                 await audioCapture.stop()
+                await mediaPipeline.stopPreview()
                 return
             }
 
@@ -470,6 +475,7 @@ final class RecordingCoordinator: ObservableObject {
             await screenCapture.stop()
             cameraCapture.stop()
             await audioCapture.stop()
+            await mediaPipeline.stopPreview()
             if setupPreviewStartID == startID, !Task.isCancelled {
                 errorMessage = readableError(error)
             }
@@ -496,15 +502,10 @@ final class RecordingCoordinator: ObservableObject {
         await screenCapture.stop()
         cameraCapture.stop()
         await audioCapture.stop()
+        await mediaPipeline.stopPreview()
         isSetupPreviewActive = false
         isSetupPreviewStarting = false
-        previewImage = nil
-        cameraPreviewImage = nil
-        microphoneLevel = 0
-        systemAudioLevel = 0
-        lastCameraPreviewTimestamp = -Double.infinity
-        lastMicrophoneLevelUpdate = -Double.infinity
-        lastSystemAudioLevelUpdate = -Double.infinity
+        clearLivePreviewStores()
 
         if statusMessage?.hasPrefix("Previewing") == true
             || statusMessage == "Enable Screen Recording to preview setup" {
@@ -519,6 +520,10 @@ final class RecordingCoordinator: ObservableObject {
 
         await stopSetupPreview()
         await startSetupPreview()
+    }
+
+    func updateLivePreviewSettings() {
+        mediaPipeline.updateOverlaySettings(settings.overlay)
     }
 
     func selectCaptureTarget(_ target: ScreenCaptureTarget) async {
@@ -611,12 +616,15 @@ final class RecordingCoordinator: ObservableObject {
                 microphone: includeMicrophone,
                 systemAudio: includeSystemAudio && audioCapture.isSystemAudioActive
             )
-            try muxer.start(
+            try await mediaPipeline.startRecording(
                 outputURL: outputURL,
                 videoSize: captureSize,
                 fileFormat: .mov,
-                includeMicrophone: includeMicrophone,
-                includeSystemAudio: includeSystemAudio && audioCapture.isSystemAudioActive
+                overlay: settings.overlay,
+                microphoneEnabled: includeMicrophone,
+                systemAudioEnabled: includeSystemAudio && audioCapture.isSystemAudioActive,
+                microphoneGain: settings.microphoneGain,
+                systemAudioGain: settings.systemAudioGain
             )
 
             try await screenCapture.start()
@@ -634,7 +642,7 @@ final class RecordingCoordinator: ObservableObject {
             statusMessage = "Recording"
         } catch {
             await stopCaptureComponents()
-            muxer.cancel()
+            await mediaPipeline.cancelRecording()
             stateMachine.fail()
             state = stateMachine.state
             recordingPresentationToken = nil
@@ -662,7 +670,7 @@ final class RecordingCoordinator: ObservableObject {
         statusMessage = "Finishing recording"
 
         do {
-            try await muxer.finish()
+            try await mediaPipeline.finishRecording()
             if let lastOutputURL {
                 statusMessage = "Removing capture warmup"
                 try await recordingLeadTrimmer.trimRecording(at: lastOutputURL)
@@ -679,7 +687,7 @@ final class RecordingCoordinator: ObservableObject {
                 statusMessage = "Recording saved"
             }
         } catch {
-            muxer.cancel()
+            await mediaPipeline.cancelRecording()
             stateMachine.fail()
             state = stateMachine.state
             recordingPresentationToken = nil
@@ -692,11 +700,11 @@ final class RecordingCoordinator: ObservableObject {
         do {
             if state == .recording {
                 try transition { try $0.pause() }
-                muxer.setPaused(true)
+                mediaPipeline.setPaused(true)
                 statusMessage = "Paused"
             } else if state == .paused {
                 try transition { try $0.resume() }
-                muxer.setPaused(false)
+                mediaPipeline.setPaused(false)
                 statusMessage = "Recording"
             }
         } catch {
@@ -719,7 +727,6 @@ final class RecordingCoordinator: ObservableObject {
         editingSession = nil
         exportedVideos = []
         statusMessage = nil
-        previewImage = nil
         elapsedSeconds = 0
         if state == .error {
             stateMachine.reset()
@@ -773,97 +780,39 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     private func wireCaptureCallbacks() {
-        screenCapture.frameHandler = { [weak self] frame in
+        let mediaPipeline = mediaPipeline
+        screenCapture.frameHandler = { frame in
+            mediaPipeline.receiveScreenFrame(frame)
+        }
+        cameraCapture.frameHandler = { frame in
+            mediaPipeline.receiveCameraFrame(frame)
+        }
+        audioCapture.sampleHandler = { sampleBuffer, source in
+            mediaPipeline.receiveAudioSample(sampleBuffer, source: source)
+        }
+        audioCapture.levelHandler = { level, source in
+            mediaPipeline.receiveAudioLevel(level, source: source)
+        }
+        mediaPipeline.screenPreviewHandler = { [weak screenPreview] frame in
             Task { @MainActor in
-                self?.handleScreenFrame(frame)
+                screenPreview?.publish(frame)
             }
         }
-        cameraCapture.frameHandler = { [weak self] frame in
+        mediaPipeline.cameraPreviewHandler = { [weak cameraPreview] frame in
             Task { @MainActor in
-                self?.handleCameraFrame(frame)
+                cameraPreview?.publish(frame)
             }
         }
-        audioCapture.sampleHandler = { [weak self] sampleBuffer, source in
+        mediaPipeline.audioLevelHandler = { [weak microphoneMeter, weak systemAudioMeter] level, rate, source in
             Task { @MainActor in
-                guard let self, self.state == .recording else {
-                    return
+                switch source {
+                case .microphone:
+                    microphoneMeter?.publish(rawLevel: level, updatesPerSecond: rate)
+                case .system:
+                    systemAudioMeter?.publish(rawLevel: level, updatesPerSecond: rate)
                 }
-                guard self.shouldRecordAudioSample(from: source) else {
-                    if source == .microphone {
-                        self.microphoneLevel = 0
-                    }
-                    return
-                }
-                self.muxer.appendAudioSampleBuffer(
-                    sampleBuffer,
-                    source: source,
-                    gain: source == .microphone ? self.settings.microphoneGain : self.settings.systemAudioGain
-                )
             }
         }
-        audioCapture.levelHandler = { [weak self] level, source in
-            Task { @MainActor in
-                self?.handleAudioLevel(level, source: source)
-            }
-        }
-    }
-
-    private func handleCameraFrame(_ frame: CapturedVideoFrame) {
-        compositor.updateCameraFrame(frame)
-
-        guard settings.overlay.isEnabled,
-              isSetupPreviewActive || isSetupPreviewStarting,
-              frame.timestamp.seconds - lastCameraPreviewTimestamp >= 0.1 else {
-            return
-        }
-
-        lastCameraPreviewTimestamp = frame.timestamp.seconds
-        cameraPreviewImage = compositor.makePreviewImage(from: frame.pixelBuffer)
-    }
-
-    private func handleAudioLevel(_ level: Double, source: AudioSourceKind) {
-        guard state == .recording || isSetupPreviewActive || isSetupPreviewStarting else {
-            return
-        }
-
-        let now = ProcessInfo.processInfo.systemUptime
-        switch source {
-        case .microphone:
-            guard settings.microphoneEnabled,
-                  now - lastMicrophoneLevelUpdate >= 0.05 else {
-                return
-            }
-            lastMicrophoneLevelUpdate = now
-            microphoneLevel = level
-        case .system:
-            guard settings.systemAudioEnabled,
-                  now - lastSystemAudioLevelUpdate >= 0.05 else {
-                return
-            }
-            lastSystemAudioLevelUpdate = now
-            systemAudioLevel = level
-        }
-    }
-
-    private func shouldRecordAudioSample(from source: AudioSourceKind) -> Bool {
-        switch source {
-        case .microphone:
-            return settings.microphoneEnabled
-        case .system:
-            return settings.systemAudioEnabled && audioCapture.isSystemAudioActive
-        }
-    }
-
-    private func handleScreenFrame(_ frame: CapturedVideoFrame) {
-        guard state == .recording || isSetupPreviewActive || isSetupPreviewStarting else {
-            return
-        }
-
-        let pixelBuffer = compositor.compose(screenFrame: frame, settings: settings.overlay) ?? frame.pixelBuffer
-        if state == .recording {
-            muxer.appendVideoPixelBuffer(pixelBuffer, at: frame.timestamp)
-        }
-        previewImage = compositor.makePreviewImage(from: pixelBuffer)
     }
 
     private func isCameraReadyForSetupPreview() async -> Bool {
@@ -1091,10 +1040,7 @@ final class RecordingCoordinator: ObservableObject {
 
     private func resetForNewRecording() {
         clearError()
-        previewImage = nil
-        cameraPreviewImage = nil
-        microphoneLevel = 0
-        systemAudioLevel = 0
+        clearLivePreviewStores()
         elapsedSeconds = 0
         lastOutputURL = nil
         recordingPresentationToken = nil
@@ -1146,9 +1092,14 @@ final class RecordingCoordinator: ObservableObject {
         await screenCapture.stop()
         cameraCapture.stop()
         await audioCapture.stop()
-        microphoneLevel = 0
-        systemAudioLevel = 0
-        cameraPreviewImage = nil
+        clearLivePreviewStores()
+    }
+
+    private func clearLivePreviewStores() {
+        screenPreview.clear()
+        cameraPreview.clear()
+        microphoneMeter.clear()
+        systemAudioMeter.clear()
     }
 
     private func readableError(_ error: Error) -> String {
