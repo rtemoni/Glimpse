@@ -16,6 +16,22 @@
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>evpzzE+vRUm+kXmw3sIgC7ToR1HEX84aKNN1+lnPLXQ=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundleIconFile</key>

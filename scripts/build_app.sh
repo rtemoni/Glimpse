@@ -12,6 +12,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/.build/distribution}"
 INFO_PLIST_SOURCE="${INFO_PLIST_SOURCE:-$REPO_ROOT/Info.plist}"
 ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$REPO_ROOT/Signing/ScreenCamRecorder.entitlements}"
 RESOURCE_BUNDLE_NAME="${RESOURCE_BUNDLE_NAME:-Glimpse_Glimpse.bundle}"
+SPARKLE_FRAMEWORK_SOURCE="${SPARKLE_FRAMEWORK_SOURCE:-$REPO_ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-13.0}"
 SKIP_CODESIGN="${SKIP_CODESIGN:-0}"
 RESET_SCREEN_CAPTURE_TCC="${RESET_SCREEN_CAPTURE_TCC:-1}"
@@ -92,7 +93,40 @@ if [[ -d "$BIN_PATH/$RESOURCE_BUNDLE_NAME" ]]; then
     cp -R "$BIN_PATH/$RESOURCE_BUNDLE_NAME" "$RESOURCES_DIR/"
 fi
 
+if [[ ! -d "$SPARKLE_FRAMEWORK_SOURCE" ]]; then
+    echo "Sparkle.framework was not resolved at $SPARKLE_FRAMEWORK_SOURCE" >&2
+    exit 1
+fi
+ditto "$SPARKLE_FRAMEWORK_SOURCE" "$FRAMEWORKS_DIR/Sparkle.framework"
+
 if [[ "$SKIP_CODESIGN" != "1" ]]; then
+    SPARKLE_FRAMEWORK="$FRAMEWORKS_DIR/Sparkle.framework"
+    CODESIGN_ARGS=(--force --options runtime)
+    if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
+        CODESIGN_IDENTITY="$SIGNING_IDENTITY"
+        CODESIGN_ARGS+=(--timestamp)
+    else
+        echo "SIGNING_IDENTITY is not set; applying local ad-hoc signatures."
+        CODESIGN_IDENTITY="-"
+    fi
+
+    codesign "${CODESIGN_ARGS[@]}" \
+        --sign "$CODESIGN_IDENTITY" \
+        "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Installer.xpc"
+    codesign "${CODESIGN_ARGS[@]}" \
+        --preserve-metadata=entitlements \
+        --sign "$CODESIGN_IDENTITY" \
+        "$SPARKLE_FRAMEWORK/Versions/B/XPCServices/Downloader.xpc"
+    codesign "${CODESIGN_ARGS[@]}" \
+        --sign "$CODESIGN_IDENTITY" \
+        "$SPARKLE_FRAMEWORK/Versions/B/Autoupdate"
+    codesign "${CODESIGN_ARGS[@]}" \
+        --sign "$CODESIGN_IDENTITY" \
+        "$SPARKLE_FRAMEWORK/Versions/B/Updater.app"
+    codesign "${CODESIGN_ARGS[@]}" \
+        --sign "$CODESIGN_IDENTITY" \
+        "$SPARKLE_FRAMEWORK"
+
     if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
         echo "Signing $APP_DIR with $SIGNING_IDENTITY..."
         codesign --force --timestamp --options runtime \
@@ -100,9 +134,13 @@ if [[ "$SKIP_CODESIGN" != "1" ]]; then
             --sign "$SIGNING_IDENTITY" \
             "$APP_DIR"
     else
-        echo "SIGNING_IDENTITY is not set; applying local ad-hoc signature."
-        codesign --force --deep --options runtime \
-            --entitlements "$ENTITLEMENTS_PATH" \
+        AD_HOC_ENTITLEMENTS_PATH="$OUTPUT_DIR/$APP_NAME-ad-hoc.entitlements"
+        cp "$ENTITLEMENTS_PATH" "$AD_HOC_ENTITLEMENTS_PATH"
+        /usr/libexec/PlistBuddy \
+            -c "Add :com.apple.security.cs.disable-library-validation bool true" \
+            "$AD_HOC_ENTITLEMENTS_PATH"
+        codesign --force --options runtime \
+            --entitlements "$AD_HOC_ENTITLEMENTS_PATH" \
             --sign - \
             "$APP_DIR"
     fi
