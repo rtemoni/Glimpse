@@ -8,6 +8,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
+    @EnvironmentObject private var updateController: AppUpdateController
     @State private var hasStartedPermissionOnboarding = false
 
     var body: some View {
@@ -39,6 +40,9 @@ struct ContentView: View {
             )
         )
         .onAppear {
+            updateController.configurationBackupHandler = {
+                try coordinator.backupSettingsForUpdate()
+            }
             coordinator.refreshDevices()
             coordinator.startPermissionMonitoring()
         }
@@ -53,6 +57,36 @@ struct ContentView: View {
             }
         } message: {
             Text(coordinator.errorMessage ?? "")
+        }
+        .alert(
+            updateController.presentedAlert?.title ?? "Glimpse Update",
+            isPresented: updateController.alertBinding
+        ) {
+            switch updateController.presentedAlert?.kind {
+            case .updateAvailable:
+                Button("Later", role: .cancel) {
+                    updateController.deferPresentedUpdate()
+                }
+                Button("Download") {
+                    updateController.downloadPresentedUpdate()
+                }
+            case .installationChoice:
+                Button("Cancel", role: .cancel) {
+                    updateController.cancelInstallationChoice()
+                }
+                Button("Next Launch") {
+                    updateController.installUpdateOnNextLaunch()
+                }
+                Button("Update Now") {
+                    updateController.installUpdateNow()
+                }
+            case .information, .none:
+                Button("OK", role: .cancel) {
+                    updateController.acknowledgeInformation()
+                }
+            }
+        } message: {
+            Text(updateController.presentedAlert?.message ?? "")
         }
         .sheet(isPresented: $coordinator.isCaptureTargetPickerPresented) {
             CaptureTargetPickerSheet()
@@ -3115,13 +3149,8 @@ private struct CompactIdleView: View {
 
             Spacer()
 
-            Button {
-                updateController.checkForUpdates()
-            } label: {
-                Label("Check for Updates", systemImage: "arrow.down.circle")
-            }
-            .disabled(!updateController.canCheckForUpdates)
-            .help("Check GitHub and install a newer Glimpse release")
+            UpdateActionButton(longIdleTitle: true)
+                .environmentObject(updateController)
         }
     }
 
@@ -4516,12 +4545,8 @@ private struct ReleaseSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button {
-                    updateController.checkForUpdates()
-                } label: {
-                    Label("Check", systemImage: "arrow.down.circle")
-                }
-                .disabled(!updateController.canCheckForUpdates)
+                UpdateActionButton(longIdleTitle: false)
+                    .environmentObject(updateController)
             }
 
             if let status = updateController.statusMessage {
@@ -4530,6 +4555,60 @@ private struct ReleaseSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+private struct UpdateActionButton: View {
+    @EnvironmentObject private var updateController: AppUpdateController
+    let longIdleTitle: Bool
+
+    var body: some View {
+        Group {
+            if updateController.isAttentionAction {
+                actionButton
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+            } else {
+                actionButton
+                    .buttonStyle(.bordered)
+            }
+        }
+        .help(helpText)
+    }
+
+    private var actionButton: some View {
+        Button {
+            updateController.performPrimaryAction()
+        } label: {
+            Label(actionTitle, systemImage: updateController.actionSystemImage)
+                .contentTransition(.numericText())
+        }
+        .disabled(!updateController.isActionEnabled)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var actionTitle: String {
+        if longIdleTitle, updateController.phase == .idle {
+            return "Check for Updates"
+        }
+        return updateController.actionTitle
+    }
+
+    private var accessibilityLabel: String {
+        switch updateController.phase {
+        case let .downloading(percent):
+            return "Update download \(percent) percent"
+        case .preparing:
+            return "Update download 99 percent, preparing"
+        default:
+            return actionTitle
+        }
+    }
+
+    private var helpText: String {
+        updateController.isAttentionAction
+            ? "Choose whether to update now or on next launch"
+            : "Check GitHub and install a newer Glimpse release"
     }
 }
 

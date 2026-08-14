@@ -34,10 +34,10 @@ struct GlimpseApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .appInfo) {
-                Button("Check for Updates...") {
-                    updateController.checkForUpdates()
+                Button(updateController.isAttentionAction ? "Install Update…" : "Check for Updates…") {
+                    updateController.performPrimaryAction()
                 }
-                .disabled(!updateController.canCheckForUpdates)
+                .disabled(!updateController.isActionEnabled)
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             }
         }
