@@ -55,7 +55,7 @@ enum ScreenCaptureTarget: Identifiable {
         }
     }
 
-    func previewImage(maximumSize: CGSize) -> NSImage? {
+    func previewImage(maximumSize: CGSize) -> CGImage? {
         let cgImage: CGImage?
         switch self {
         case .display(let display):
@@ -73,21 +73,47 @@ enum ScreenCaptureTarget: Identifiable {
             return nil
         }
 
-        let sourceSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let maxWidth = max(maximumSize.width, 1)
-        let maxHeight = max(maximumSize.height, 1)
-        let scale = min(1, min(maxWidth / max(sourceSize.width, 1), maxHeight / max(sourceSize.height, 1)))
-        return NSImage(
-            cgImage: cgImage,
-            size: NSSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
+        let maxWidth = max(Int(maximumSize.width.rounded(.down)), 1)
+        let maxHeight = max(Int(maximumSize.height.rounded(.down)), 1)
+        let scale = min(
+            1,
+            min(
+                CGFloat(maxWidth) / CGFloat(max(cgImage.width, 1)),
+                CGFloat(maxHeight) / CGFloat(max(cgImage.height, 1))
+            )
         )
+        let targetWidth = max(1, Int((CGFloat(cgImage.width) * scale).rounded(.down)))
+        let targetHeight = max(1, Int((CGFloat(cgImage.height) * scale).rounded(.down)))
+        guard targetWidth != cgImage.width || targetHeight != cgImage.height else {
+            return cgImage
+        }
+
+        guard let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                data: nil,
+                width: targetWidth,
+                height: targetHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
+            return cgImage
+        }
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        return context.makeImage() ?? cgImage
     }
 }
 
 final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
     var frameHandler: ((CapturedVideoFrame) -> Void)?
 
-    private let sampleQueue = DispatchQueue(label: "Glimpse.screen-samples")
+    private let sampleQueue = DispatchQueue(
+        label: "Glimpse.screen-samples",
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
+    )
     private var stream: SCStream?
     private var preparedSize = CGSize(width: 1920, height: 1080)
 
@@ -164,6 +190,7 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        configuration.queueDepth = 5
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.showsCursor = true
         configuration.capturesAudio = false
@@ -196,6 +223,7 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
     ) {
         guard type == .screen,
               CMSampleBufferIsValid(sampleBuffer),
+              Self.isCompleteFrame(sampleBuffer),
               let pixelBuffer = sampleBuffer.imageBuffer else {
             return
         }
@@ -210,6 +238,18 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         // The coordinator owns user-visible error state. Capture callbacks are kept hardware-only.
+    }
+
+    private static func isCompleteFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+        ) as? [[SCStreamFrameInfo: Any]],
+              let statusRawValue = attachments.first?[.status] as? Int,
+              let status = SCFrameStatus(rawValue: statusRawValue) else {
+            return true
+        }
+        return status == .complete
     }
 }
 #endif

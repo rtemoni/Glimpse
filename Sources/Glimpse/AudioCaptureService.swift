@@ -22,13 +22,19 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
     }
 
     private let microphoneSession = AVCaptureSession()
-    private let microphoneSessionQueue = DispatchQueue(label: "Glimpse.microphone-session")
+    private let microphoneSessionQueue = DispatchQueue(label: "Glimpse.microphone-session", qos: .userInitiated)
     private let microphoneOutput = AVCaptureAudioDataOutput()
-    private let microphoneSampleQueue = DispatchQueue(label: "Glimpse.microphone-samples")
+    private let microphoneSampleQueue = DispatchQueue(
+        label: "Glimpse.microphone-samples",
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
+    )
     private var systemAudioStream: SystemAudioStream?
     private var includeMicrophone = false
     private var includeSystemAudio = false
     private(set) var isSystemAudioActive = false
+    private var microphoneLevelLimiter = PreviewUpdateLimiter(maximumUpdatesPerSecond: 30)
+    private var systemAudioLevelLimiter = PreviewUpdateLimiter(maximumUpdatesPerSecond: 30)
 
     static func availableMicrophoneDevices() -> [SourceDevice] {
         AVCaptureDevice.devices(for: .audio)
@@ -40,6 +46,8 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         self.includeSystemAudio = includeSystemAudio
         self.isSystemAudioActive = false
         self.systemAudioStream = nil
+        self.microphoneLevelLimiter.reset()
+        self.systemAudioLevelLimiter.reset()
 
         if includeMicrophone {
             try prepareMicrophone(deviceID: microphoneDeviceID)
@@ -51,8 +59,14 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         if includeSystemAudio {
             let systemAudioStream = SystemAudioStream()
             systemAudioStream.sampleHandler = { [weak self] sampleBuffer in
-                self?.levelHandler?(Self.displayLevel(from: sampleBuffer), .system)
-                self?.sampleHandler?(sampleBuffer, .system)
+                guard let self else {
+                    return
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if systemAudioLevelLimiter.shouldUpdate(at: now) {
+                    levelHandler?(Self.displayLevel(from: sampleBuffer), .system)
+                }
+                sampleHandler?(sampleBuffer, .system)
             }
             do {
                 try await systemAudioStream.prepare()
@@ -104,7 +118,9 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        if let averagePower = connection.audioChannels.first?.averagePowerLevel {
+        let now = ProcessInfo.processInfo.systemUptime
+        if microphoneLevelLimiter.shouldUpdate(at: now),
+           let averagePower = connection.audioChannels.first?.averagePowerLevel {
             levelHandler?(AudioLevelScale.displayLevel(decibels: Double(averagePower)), .microphone)
         }
         sampleHandler?(sampleBuffer, .microphone)
@@ -232,7 +248,11 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
 private final class SystemAudioStream: NSObject, SCStreamOutput, SCStreamDelegate {
     var sampleHandler: ((CMSampleBuffer) -> Void)?
 
-    private let sampleQueue = DispatchQueue(label: "Glimpse.system-audio-samples")
+    private let sampleQueue = DispatchQueue(
+        label: "Glimpse.system-audio-samples",
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
+    )
     private var stream: SCStream?
 
     func prepare() async throws {

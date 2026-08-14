@@ -2962,7 +2962,8 @@ private struct CaptureTargetCard: View {
     var actionTitle = "Record"
     var actionSystemImage = "record.circle"
     var isSelected = false
-    @State private var previewImage: NSImage?
+    var liveFrame: CapturePreviewFrame? = nil
+    @State private var previewImage: CGImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2971,8 +2972,8 @@ private struct CaptureTargetCard: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.black.opacity(0.32))
 
-                    if let previewImage {
-                        Image(nsImage: previewImage)
+                    if let image = liveFrame?.image ?? previewImage {
+                        Image(decorative: image, scale: 1)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -2989,6 +2990,12 @@ private struct CaptureTargetCard: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if let liveFrame {
+                        LiveRateBadge(rate: liveFrame.updatesPerSecond, unit: "fps")
+                            .padding(8)
+                    }
                 }
             }
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -3028,8 +3035,32 @@ private struct CaptureTargetCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .task(id: target.id) {
-            previewImage = target.previewImage(maximumSize: CGSize(width: 640, height: 400))
+            let target = target
+            let image = await Task.detached(priority: .utility) {
+                target.previewImage(maximumSize: CGSize(width: 640, height: 400))
+            }.value
+            guard !Task.isCancelled else {
+                return
+            }
+            previewImage = image
         }
+    }
+}
+
+private struct LiveCaptureTargetCard: View {
+    let target: ScreenCaptureTarget
+    let actionTitle: String
+    let actionSystemImage: String
+    @ObservedObject var preview: PreviewFrameStore
+
+    var body: some View {
+        CaptureTargetCard(
+            target: target,
+            actionTitle: actionTitle,
+            actionSystemImage: actionSystemImage,
+            isSelected: true,
+            liveFrame: preview.frame
+        )
     }
 }
 
@@ -3069,6 +3100,9 @@ private struct CompactIdleView: View {
         }
         .onChange(of: coordinator.settings.overlay.isEnabled) { _ in
             restartPreview()
+        }
+        .onChange(of: coordinator.settings.overlay) { _ in
+            coordinator.updateLivePreviewSettings()
         }
         .onChange(of: coordinator.settings.selectedCameraID) { _ in
             restartPreview()
@@ -3280,7 +3314,7 @@ private struct ReadyCameraColumn: View {
             Toggle("Include camera", isOn: $coordinator.settings.overlay.isEnabled)
                 .toggleStyle(.switch)
 
-            ReadyCameraPreview()
+            ReadyCameraPreview(preview: coordinator.cameraPreview)
                 .environmentObject(coordinator)
 
             Picker("Camera", selection: $coordinator.settings.selectedCameraID) {
@@ -3306,6 +3340,7 @@ private struct ReadyCameraColumn: View {
 
 private struct ReadyCameraPreview: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
+    @ObservedObject var preview: PreviewFrameStore
 
     var body: some View {
         GeometryReader { proxy in
@@ -3315,8 +3350,8 @@ private struct ReadyCameraPreview: View {
 
                 if !coordinator.settings.overlay.isEnabled {
                     previewPlaceholder(systemImage: "video.slash", text: "Camera off")
-                } else if let image = coordinator.cameraPreviewImage {
-                    Image(nsImage: image)
+                } else if let frame = preview.frame {
+                    Image(decorative: frame.image, scale: 1)
                         .resizable()
                         .scaledToFill()
                         .frame(width: proxy.size.width, height: proxy.size.height)
@@ -3332,6 +3367,12 @@ private struct ReadyCameraPreview: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                if let frame = preview.frame {
+                    LiveRateBadge(rate: frame.updatesPerSecond, unit: "fps")
+                        .padding(8)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
@@ -3362,7 +3403,7 @@ private struct ReadyMicrophoneColumn: View {
         ) {
             HStack(alignment: .center, spacing: 16) {
                 ReadyAudioFeedback(
-                    level: coordinator.microphoneLevel,
+                    meter: coordinator.microphoneMeter,
                     isEnabled: coordinator.settings.microphoneEnabled,
                     listeningText: "Listening to microphone",
                     color: .green
@@ -3407,7 +3448,7 @@ private struct ReadySystemAudioColumn: View {
         ) {
             HStack(alignment: .center, spacing: 16) {
                 ReadyAudioFeedback(
-                    level: coordinator.systemAudioLevel,
+                    meter: coordinator.systemAudioMeter,
                     isEnabled: coordinator.settings.systemAudioEnabled && coordinator.isSystemAudioAvailable,
                     listeningText: coordinator.isSystemAudioAvailable ? "Listening to Mac audio" : "Unavailable on this Mac",
                     color: .purple
@@ -3509,12 +3550,22 @@ private struct ReadyCaptureTargetSelector: View {
                                     await coordinator.selectCaptureTarget(target)
                                 }
                             } label: {
-                                CaptureTargetCard(
-                                    target: target,
-                                    actionTitle: isSelected ? "Selected" : "Select",
-                                    actionSystemImage: isSelected ? "checkmark.circle.fill" : "cursorarrow.click",
-                                    isSelected: isSelected
-                                )
+                                Group {
+                                    if isSelected {
+                                        LiveCaptureTargetCard(
+                                            target: target,
+                                            actionTitle: "Selected",
+                                            actionSystemImage: "checkmark.circle.fill",
+                                            preview: coordinator.screenPreview
+                                        )
+                                    } else {
+                                        CaptureTargetCard(
+                                            target: target,
+                                            actionTitle: "Select",
+                                            actionSystemImage: "cursorarrow.click"
+                                        )
+                                    }
+                                }
                                 .frame(width: cardWidth, height: previewStripHeight - 8)
                             }
                             .buttonStyle(.plain)
@@ -3597,7 +3648,7 @@ private struct ReadyAudioFeedback: View {
         0.42, 0.82, 0.54, 0.94, 0.61, 0.76, 0.46, 0.28
     ]
 
-    let level: Double
+    @ObservedObject var meter: AudioMeterStore
     let isEnabled: Bool
     let listeningText: String
     let color: Color
@@ -3613,24 +3664,53 @@ private struct ReadyAudioFeedback: View {
             }
             .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76)
             .background(.black.opacity(0.14), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .animation(.interactiveSpring(response: 0.12, dampingFraction: 0.54), value: level)
+            .animation(.linear(duration: 1.0 / 30.0), value: meter.level)
 
-            Text(isEnabled ? listeningText : "Source off")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text(isEnabled ? listeningText : "Source off")
+                    .lineLimit(1)
+                if isEnabled, meter.updatesPerSecond > 0 {
+                    Text("·")
+                    Text("\(Int(meter.updatesPerSecond.rounded())) Hz")
+                        .monospacedDigit()
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(listeningText)
-        .accessibilityValue(isEnabled ? "Level \(Int(min(1, max(0, level)) * 100)) percent" : "Off")
+        .accessibilityValue(isEnabled ? "Level \(Int(min(1, max(0, meter.level)) * 100)) percent" : "Off")
     }
 
     private func barHeight(at index: Int) -> Double {
         guard isEnabled else {
             return 4
         }
-        let visibleLevel = max(0.035, min(1, level))
+        let visibleLevel = max(0.035, min(1, meter.level))
         return max(4, 68 * Self.barProfile[index] * visibleLevel)
+    }
+}
+
+private struct LiveRateBadge: View {
+    let rate: Double
+    let unit: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(.green)
+                .frame(width: 6, height: 6)
+            Text(rate > 0 ? "\(Int(rate.rounded())) \(unit)" : "Live")
+                .monospacedDigit()
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(.black.opacity(0.68), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rate > 0 ? "Live preview, \(Int(rate.rounded())) \(unit)" : "Live preview")
     }
 }
 
@@ -4074,7 +4154,7 @@ private struct ControlBar: View {
 
             sourceToggles
 
-            AudioLevelMeter(level: coordinator.microphoneLevel)
+            AudioLevelMeter(meter: coordinator.microphoneMeter)
                 .frame(width: 96)
 
             Spacer(minLength: 12)
@@ -4093,7 +4173,7 @@ private struct ControlBar: View {
 
             HStack(spacing: 10) {
                 sourceToggles
-                AudioLevelMeter(level: coordinator.microphoneLevel)
+                AudioLevelMeter(meter: coordinator.microphoneMeter)
                     .frame(width: 82)
                 Spacer(minLength: 8)
                 statusText
@@ -4274,7 +4354,7 @@ private func sourceDisabledSystemImage(for systemImage: String) -> String {
 }
 
 private struct AudioLevelMeter: View {
-    var level: Double
+    @ObservedObject var meter: AudioMeterStore
 
     var body: some View {
         GeometryReader { proxy in
@@ -4282,11 +4362,12 @@ private struct AudioLevelMeter: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(nsColor: .quaternaryLabelColor))
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(level > 0.8 ? Color.red : Color.accentColor)
-                    .frame(width: proxy.size.width * min(max(level, 0), 1))
+                    .fill(meter.level > 0.8 ? Color.red : Color.accentColor)
+                    .frame(width: proxy.size.width * min(max(meter.level, 0), 1))
             }
         }
         .frame(height: 8)
+        .animation(.linear(duration: 1.0 / 30.0), value: meter.level)
         .accessibilityLabel("Microphone level")
     }
 }

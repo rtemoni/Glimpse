@@ -9,9 +9,13 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
     var frameHandler: ((CapturedVideoFrame) -> Void)?
 
     private let session = AVCaptureSession()
-    private let sessionQueue = DispatchQueue(label: "Glimpse.camera-session")
+    private let sessionQueue = DispatchQueue(label: "Glimpse.camera-session", qos: .userInitiated)
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let sampleQueue = DispatchQueue(label: "Glimpse.camera-samples")
+    private let sampleQueue = DispatchQueue(
+        label: "Glimpse.camera-samples",
+        qos: .userInteractive,
+        autoreleaseFrequency: .workItem
+    )
 
     static func availableCameraDevices() -> [SourceDevice] {
         AVCaptureDevice.DiscoverySession(
@@ -36,6 +40,8 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         guard let device = selectedDevice(deviceID: deviceID) else {
             throw RecorderRuntimeError.captureUnavailable("No camera is available.")
         }
+
+        try configureFrameRate(for: device)
 
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
@@ -101,6 +107,21 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
             .first { $0.uniqueID == deviceID }
         }
         return AVCaptureDevice.default(for: .video)
+    }
+
+    private func configureFrameRate(for device: AVCaptureDevice) throws {
+        let targetFrameRate = 30.0
+        guard device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+            $0.minFrameRate <= targetFrameRate && $0.maxFrameRate >= targetFrameRate
+        }) else {
+            return
+        }
+
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        let duration = CMTime(value: 1, timescale: CMTimeScale(targetFrameRate))
+        device.activeVideoMinFrameDuration = duration
+        device.activeVideoMaxFrameDuration = duration
     }
 }
 #endif
