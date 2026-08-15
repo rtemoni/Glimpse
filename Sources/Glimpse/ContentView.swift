@@ -6,6 +6,37 @@ import GlimpseCore
 import ScreenCaptureKit
 import SwiftUI
 
+struct TimelineEditingActions {
+    let splitTitle: String
+    let canSplit: Bool
+    let canDelete: Bool
+    let canUndo: Bool
+    let canSelectAll: Bool
+    let canMoveToPreviousClip: Bool
+    let canMoveToNextClip: Bool
+    let playPause: () -> Void
+    let undo: () -> Void
+    let selectAll: () -> Void
+    let deselectAll: () -> Void
+    let split: () -> Void
+    let delete: () -> Void
+    let goToStart: () -> Void
+    let moveToPreviousClip: () -> Void
+    let moveToNextClip: () -> Void
+    let cycleClipMode: () -> Void
+}
+
+private struct TimelineEditingActionsKey: FocusedValueKey {
+    typealias Value = TimelineEditingActions
+}
+
+extension FocusedValues {
+    var timelineEditingActions: TimelineEditingActions? {
+        get { self[TimelineEditingActionsKey.self] }
+        set { self[TimelineEditingActionsKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
     @EnvironmentObject private var updateController: AppUpdateController
@@ -36,7 +67,7 @@ struct ContentView: View {
         .background(
             RecordingWindowLifecycleController(
                 recordingPresentationToken: coordinator.recordingPresentationToken,
-                shouldRestoreAfterRecording: coordinator.recordingSummary != nil
+                isRecordingActive: coordinator.state == .recording || coordinator.state == .paused
             )
         )
         .onAppear {
@@ -258,13 +289,16 @@ private struct EditorWorkspace: View {
                             scrub: scrub,
                             resetPlayhead: resetPlayhead,
                             moveToNextClip: moveToNextClip,
-                            moveToLastClip: moveToLastClip,
+                            moveToPreviousClip: moveToPreviousClip,
                             undoLastAction: undoLastAction,
+                            selectAllClips: selectAllClips,
+                            deleteSelectedClip: deleteSelectedClip,
                             toggleClipMode: toggleClipMode,
                             selectClip: selectClip,
                             selectAudioClip: selectAudioClip,
                             splitAtPlayhead: splitAtPlayhead,
-                            canUndo: canUndo
+                            canUndo: canUndo,
+                            canDelete: canDeleteSelectedClips
                         )
                         .tag(EditorWorkspaceTab.timeline)
                         .tabItem {
@@ -301,6 +335,7 @@ private struct EditorWorkspace: View {
             }
         }
         .frame(minWidth: 880, minHeight: 620)
+        .focusedSceneValue(\.timelineEditingActions, timelineEditingActions)
         .onAppear {
             player.replaceCurrentItem(with: AVPlayerItem(url: summary.sourceURL))
             installTimeObserver()
@@ -487,7 +522,7 @@ private struct EditorWorkspace: View {
         scrub(to: start)
     }
 
-    private func moveToLastClip() {
+    private func moveToPreviousClip() {
         guard let session = coordinator.editingSession,
               let start = session.clipRanges.map(\.start).last(where: { $0 < currentTime - 0.001 }) else {
             return
@@ -515,8 +550,97 @@ private struct EditorWorkspace: View {
         clipMode = clipMode.next
     }
 
+    private func selectAllClips() {
+        guard let session = coordinator.editingSession else {
+            return
+        }
+
+        switch clipMode {
+        case .video:
+            selectedVideoClips = session.clipRanges
+            selectedAudioClips = []
+            selectedTrack = .video
+        case .audio:
+            selectedVideoClips = []
+            selectedAudioClips = session.audioClipRanges
+            selectedTrack = .audio
+        case .both:
+            selectedVideoClips = session.clipRanges
+            selectedAudioClips = session.audioClipRanges
+            selectedTrack = .video
+        }
+    }
+
+    private func deselectAllClips() {
+        selectedVideoClips = []
+        selectedAudioClips = []
+    }
+
     private var canUndo: Bool {
         undoSnapshot != nil || undoPlayheadTime != nil
+    }
+
+    private var canDeleteSelectedClips: Bool {
+        !selectedVideoClips.isEmpty || !selectedAudioClips.isEmpty
+    }
+
+    private var timelineEditingActions: TimelineEditingActions {
+        TimelineEditingActions(
+            splitTitle: clipMode.splitButtonTitle,
+            canSplit: canSplitSelectedTrack,
+            canDelete: canDeleteSelectedClips,
+            canUndo: canUndo,
+            canSelectAll: canSelectAllClips,
+            canMoveToPreviousClip: previousClipStart != nil,
+            canMoveToNextClip: nextClipStart != nil,
+            playPause: togglePlayback,
+            undo: undoLastAction,
+            selectAll: selectAllClips,
+            deselectAll: deselectAllClips,
+            split: splitAtPlayhead,
+            delete: deleteSelectedClip,
+            goToStart: resetPlayhead,
+            moveToPreviousClip: moveToPreviousClip,
+            moveToNextClip: moveToNextClip,
+            cycleClipMode: toggleClipMode
+        )
+    }
+
+    private var canSplitSelectedTrack: Bool {
+        guard let session = coordinator.editingSession else {
+            return false
+        }
+        switch clipMode {
+        case .video:
+            return session.clipRanges.contains { $0.duration > 0.1 }
+        case .audio:
+            return session.audioClipRanges.contains { $0.duration > 0.1 }
+        case .both:
+            return session.clipRanges.contains { $0.duration > 0.1 }
+                || session.audioClipRanges.contains { $0.duration > 0.1 }
+        }
+    }
+
+    private var canSelectAllClips: Bool {
+        guard let session = coordinator.editingSession else {
+            return false
+        }
+        switch clipMode {
+        case .video:
+            return !session.clipRanges.isEmpty
+        case .audio:
+            return !session.audioClipRanges.isEmpty
+        case .both:
+            return !session.clipRanges.isEmpty || !session.audioClipRanges.isEmpty
+        }
+    }
+
+    private var nextClipStart: Double? {
+        coordinator.editingSession?.clipRanges.map(\.start).first { $0 > currentTime + 0.001 }
+    }
+
+    private var previousClipStart: Double? {
+        coordinator.editingSession?.clipRanges.map(\.start).last { $0 < currentTime - 0.001 }
     }
 
     private func storeSessionUndo(_ session: EditingSession) {
@@ -639,13 +763,35 @@ private struct EditorWorkspace: View {
                 moveToNextClip()
                 return nil
             case "l":
-                moveToLastClip()
+                moveToPreviousClip()
+                return nil
+            case "a":
+                selectAllClips()
                 return nil
             case "t":
                 toggleClipMode()
                 return nil
             case "z":
                 undoLastAction()
+                return nil
+            default:
+                break
+            }
+        }
+
+        if shortcutModifiers == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "a" {
+            deselectAllClips()
+            return nil
+        }
+
+        if shortcutModifiers == .option {
+            switch event.keyCode {
+            case 123:
+                moveToPreviousClip()
+                return nil
+            case 124:
+                moveToNextClip()
                 return nil
             default:
                 break
@@ -663,6 +809,9 @@ private struct EditorWorkspace: View {
             return nil
         case 51, 117:
             deleteSelectedClip()
+            return nil
+        case 53:
+            deselectAllClips()
             return nil
         default:
             return event
@@ -1037,14 +1186,14 @@ private enum TimelineClipMode: String, CaseIterable, Identifiable {
         }
     }
 
-    var clipButtonTitle: String {
+    var splitButtonTitle: String {
         switch self {
         case .video:
-            return "Clip Video"
+            return "Split Video"
         case .audio:
-            return "Clip Audio"
+            return "Split Audio"
         case .both:
-            return "Clip Both"
+            return "Split Both"
         }
     }
 
@@ -1240,13 +1389,16 @@ private struct TimelineEditorView: View {
     let scrub: (Double) -> Void
     let resetPlayhead: () -> Void
     let moveToNextClip: () -> Void
-    let moveToLastClip: () -> Void
+    let moveToPreviousClip: () -> Void
     let undoLastAction: () -> Void
+    let selectAllClips: () -> Void
+    let deleteSelectedClip: () -> Void
     let toggleClipMode: () -> Void
     let selectClip: (TimelineRange, TimelineSelectionInteraction) -> Void
     let selectAudioClip: (TimelineRange, TimelineSelectionInteraction) -> Void
     let splitAtPlayhead: () -> Void
     let canUndo: Bool
+    let canDelete: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1312,28 +1464,41 @@ private struct TimelineEditorView: View {
                     Button {
                         splitAtPlayhead()
                     } label: {
-                        TimelineButtonLabel(title: clipMode.clipButtonTitle, systemImage: "scissors", shortcut: "CMD+K")
+                        TimelineButtonLabel(title: clipMode.splitButtonTitle, systemImage: "scissors", shortcut: "CMD+K")
                     }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut("k", modifiers: [.command])
                     .disabled(!canSplitSelectedTrack)
 
+                    Button(action: deleteSelectedClip) {
+                        TimelineButtonLabel(title: "Delete", systemImage: "trash", shortcut: "⌫")
+                    }
+                    .keyboardShortcut(.delete, modifiers: [])
+                    .disabled(!canDelete)
+                    .tint(.red)
+
+                    Button(action: selectAllClips) {
+                        TimelineButtonLabel(title: "Select All", systemImage: "rectangle.stack", shortcut: "CMD+A")
+                    }
+                    .keyboardShortcut("a", modifiers: [.command])
+                    .disabled(!canSelectAllClips)
+
                     Button(action: resetPlayhead) {
-                        TimelineButtonLabel(title: "Reset", systemImage: "backward.end", shortcut: "CMD+0")
+                        TimelineButtonLabel(title: "Go to Start", systemImage: "backward.end", shortcut: "CMD+0")
                     }
                     .keyboardShortcut("0", modifiers: [.command])
                     .disabled(currentTime <= 0)
 
-                    Button(action: moveToLastClip) {
-                        TimelineButtonLabel(title: "Last Clip", systemImage: "backward.end", shortcut: "CMD+L")
+                    Button(action: moveToPreviousClip) {
+                        TimelineButtonLabel(title: "Previous", systemImage: "backward.end", shortcut: "⌥←")
                     }
-                    .keyboardShortcut("l", modifiers: [.command])
+                    .keyboardShortcut(.leftArrow, modifiers: [.option])
                     .disabled(previousClipStart == nil)
 
                     Button(action: moveToNextClip) {
-                        TimelineButtonLabel(title: "Next Clip", systemImage: "forward.end", shortcut: "CMD+]")
+                        TimelineButtonLabel(title: "Next", systemImage: "forward.end", shortcut: "⌥→")
                     }
-                    .keyboardShortcut("]", modifiers: [.command])
+                    .keyboardShortcut(.rightArrow, modifiers: [.option])
                     .disabled(nextClipStart == nil)
                 }
                 .controlSize(.regular)
@@ -1357,6 +1522,17 @@ private struct TimelineEditorView: View {
         case .both:
             return session.clipRanges.contains { $0.duration > 0.1 }
                 || session.audioClipRanges.contains { $0.duration > 0.1 }
+        }
+    }
+
+    private var canSelectAllClips: Bool {
+        switch clipMode {
+        case .video:
+            return !session.clipRanges.isEmpty
+        case .audio:
+            return !session.audioClipRanges.isEmpty
+        case .both:
+            return !session.clipRanges.isEmpty || !session.audioClipRanges.isEmpty
         }
     }
 

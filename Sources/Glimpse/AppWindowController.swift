@@ -9,8 +9,8 @@ private final class GlimpseMainWindowRegistry {
     static let shared = GlimpseMainWindowRegistry()
 
     weak var window: NSWindow?
-    var lastMinimizedRecordingToken: UUID?
-    var didRestoreCompletedRecording = false
+    var lastHiddenRecordingToken: UUID?
+    var isHiddenForRecording = false
 }
 
 @MainActor
@@ -50,7 +50,7 @@ enum GlimpseWindowPresenter {
 
 struct RecordingWindowLifecycleController: NSViewRepresentable {
     let recordingPresentationToken: UUID?
-    let shouldRestoreAfterRecording: Bool
+    let isRecordingActive: Bool
 
     func makeNSView(context: Context) -> NSView {
         NSView()
@@ -64,18 +64,18 @@ struct RecordingWindowLifecycleController: NSViewRepresentable {
             let registry = GlimpseMainWindowRegistry.shared
             registry.window = window
 
-            if let recordingPresentationToken,
-               registry.lastMinimizedRecordingToken != recordingPresentationToken {
-                registry.lastMinimizedRecordingToken = recordingPresentationToken
-                window.miniaturize(nil)
-            }
-
-            if shouldRestoreAfterRecording,
-               !registry.didRestoreCompletedRecording {
-                registry.didRestoreCompletedRecording = true
+            if isRecordingActive,
+               let recordingPresentationToken,
+               registry.lastHiddenRecordingToken != recordingPresentationToken {
+                registry.lastHiddenRecordingToken = recordingPresentationToken
+                registry.isHiddenForRecording = true
+                window.isExcludedFromWindowsMenu = true
+                window.orderOut(nil)
+            } else if !isRecordingActive, registry.isHiddenForRecording {
+                registry.isHiddenForRecording = false
+                registry.lastHiddenRecordingToken = nil
+                window.isExcludedFromWindowsMenu = false
                 GlimpseWindowPresenter.showMainWindow(preferredWindow: window)
-            } else if !shouldRestoreAfterRecording {
-                registry.didRestoreCompletedRecording = false
             }
         }
     }
@@ -87,6 +87,9 @@ final class GlimpseAppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
+        if GlimpseMainWindowRegistry.shared.isHiddenForRecording {
+            return false
+        }
         if !flag {
             GlimpseWindowPresenter.showMainWindow()
         }

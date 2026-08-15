@@ -40,11 +40,86 @@ struct GlimpseApp: App {
                 .disabled(!updateController.isActionEnabled)
                 .keyboardShortcut("u", modifiers: [.command, .shift])
             }
+            TimelineEditingCommands()
         }
     }
 
     private static func appIconImage() -> NSImage? {
         AppResources.image(named: "AppIcon", withExtension: "icns")
+    }
+}
+
+private struct TimelineEditingCommands: Commands {
+    @FocusedValue(\.timelineEditingActions) private var actions
+
+    var body: some Commands {
+        CommandMenu("Timeline") {
+            Button("Play or Pause") {
+                actions?.playPause()
+            }
+            .keyboardShortcut(.space, modifiers: [])
+            .disabled(actions == nil)
+
+            Divider()
+
+            Button("Undo Timeline Edit") {
+                actions?.undo()
+            }
+            .keyboardShortcut("z", modifiers: [.command])
+            .disabled(actions?.canUndo != true)
+
+            Button("Select All Clips") {
+                actions?.selectAll()
+            }
+            .keyboardShortcut("a", modifiers: [.command])
+            .disabled(actions?.canSelectAll != true)
+
+            Button("Deselect All Clips") {
+                actions?.deselectAll()
+            }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .disabled(actions == nil)
+
+            Divider()
+
+            Button(actions?.splitTitle ?? "Split Clip") {
+                actions?.split()
+            }
+            .keyboardShortcut("k", modifiers: [.command])
+            .disabled(actions?.canSplit != true)
+
+            Button("Delete Selected Clips") {
+                actions?.delete()
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            .disabled(actions?.canDelete != true)
+
+            Divider()
+
+            Button("Go to Start") {
+                actions?.goToStart()
+            }
+            .keyboardShortcut("0", modifiers: [.command])
+            .disabled(actions == nil)
+
+            Button("Previous Clip") {
+                actions?.moveToPreviousClip()
+            }
+            .keyboardShortcut(.leftArrow, modifiers: [.option])
+            .disabled(actions?.canMoveToPreviousClip != true)
+
+            Button("Next Clip") {
+                actions?.moveToNextClip()
+            }
+            .keyboardShortcut(.rightArrow, modifiers: [.option])
+            .disabled(actions?.canMoveToNextClip != true)
+
+            Button("Cycle Split Target") {
+                actions?.cycleClipMode()
+            }
+            .keyboardShortcut("t", modifiers: [.command])
+            .disabled(actions == nil)
+        }
     }
 }
 #endif
