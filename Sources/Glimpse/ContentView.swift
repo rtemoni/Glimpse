@@ -2410,24 +2410,54 @@ private struct EditorExportBar: View {
     let summary: RecordingSummary
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                exportStatus
+                    .layoutPriority(1)
+
+                Spacer(minLength: 12)
+
+                exportActions
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                exportStatus
+
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    exportActions
+                }
+            }
+        }
+        .controlSize(.regular)
+    }
+
+    @ViewBuilder
+    private var exportStatus: some View {
+        if let status = coordinator.statusMessage {
+            Label(
+                status,
+                systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
+            )
+            .font(.caption.weight(.medium))
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .liquidGlassSurface(cornerRadius: 10)
+        }
+
+        if coordinator.isExporting {
+            ProgressView(value: coordinator.exportProgress)
+                .progressViewStyle(.linear)
+                .frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
+                .accessibilityLabel("Export progress")
+                .accessibilityValue("\(Int((coordinator.exportProgress * 100).rounded())) percent")
+        }
+    }
+
+    private var exportActions: some View {
         HStack(spacing: 10) {
-            if let status = coordinator.statusMessage {
-                StatusPill(
-                    text: status,
-                    systemImage: coordinator.isExporting ? "square.and.arrow.up" : "checkmark.circle"
-                )
-            }
-
-            if coordinator.isExporting {
-                ProgressView(value: coordinator.exportProgress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 120)
-                    .accessibilityLabel("Export progress")
-                    .accessibilityValue("\(Int((coordinator.exportProgress * 100).rounded())) percent")
-            }
-
-            Spacer(minLength: 12)
-
             Button {
                 coordinator.revealInFinder(summary.sourceURL)
             } label: {
@@ -2453,7 +2483,7 @@ private struct EditorExportBar: View {
             .accessibilityLabel(coordinator.isExporting ? "Exporting video" : "Export video")
             .accessibilityHint("Exports the edited recording using the selected export settings")
         }
-        .controlSize(.regular)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -3369,6 +3399,22 @@ private struct CompactIdleView: View {
     }
 
     private var recordingOptions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                outputDirectoryControls
+                fileNameControls
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                outputDirectoryControls
+                fileNameControls
+            }
+        }
+        .padding(.horizontal, 2)
+    }
+
+    private var outputDirectoryControls: some View {
         HStack(spacing: 12) {
             Label(
                 "Saving to \(coordinator.settings.outputDirectory.lastPathComponent)",
@@ -3377,26 +3423,27 @@ private struct CompactIdleView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            .truncationMode(.middle)
 
             Button("Change Folder") {
                 coordinator.chooseOutputDirectory()
             }
-
-            HStack(spacing: 6) {
-                Text("Name prefix")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                TextField("screen-recording", text: $coordinator.settings.fileNamePrefix)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 156)
-                    .accessibilityLabel("Recording file name prefix")
-                    .accessibilityHint("The recording date and time are added automatically")
-            }
-
-            Spacer()
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 2)
+    }
+
+    private var fileNameControls: some View {
+        HStack(spacing: 6) {
+            Text("Name prefix")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            TextField("screen-recording", text: $coordinator.settings.fileNamePrefix)
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 140, idealWidth: 156, maxWidth: 220)
+                .accessibilityLabel("Recording file name prefix")
+                .accessibilityHint("The recording date and time are added automatically")
+        }
     }
 
     private var startRecordingAction: some View {
@@ -3984,74 +4031,102 @@ private struct PermissionOnboardingView: View {
     @EnvironmentObject private var coordinator: RecordingCoordinator
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Set Up Permissions", systemImage: "checklist")
-                    .font(.system(size: 28, weight: .semibold))
-                Text("Grant the required macOS permissions before setting up a recording. Camera and Microphone update immediately. Screen Recording and System Audio are applied by macOS only after you relaunch Glimpse.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        ZStack {
+            LiquidGlassBackdrop()
 
-            VStack(spacing: 0) {
-                ForEach(coordinator.permissionChecklist) { item in
-                    PermissionChecklistRow(item: item) {
-                        Task {
-                            await coordinator.performPermissionAction(for: item.requirement)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Set Up Permissions", systemImage: "checklist")
+                            .font(.system(size: 28, weight: .semibold))
+                        Text("Grant the required macOS permissions before setting up a recording. Camera and Microphone update immediately. Screen Recording and System Audio are applied by macOS only after you relaunch Glimpse.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    VStack(spacing: 0) {
+                        ForEach(coordinator.permissionChecklist) { item in
+                            PermissionChecklistRow(item: item) {
+                                Task {
+                                    await coordinator.performPermissionAction(for: item.requirement)
+                                }
+                            }
+
+                            if item.id != coordinator.permissionChecklist.last?.id {
+                                Divider()
+                                    .padding(.leading, 62)
+                            }
                         }
                     }
+                    .liquidGlassSurface(cornerRadius: 22)
 
-                    if item.id != coordinator.permissionChecklist.last?.id {
-                        Divider()
-                            .padding(.leading, 62)
-                    }
+                    permissionFooter
                 }
+                .padding(34)
+                .frame(maxWidth: 820, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
-            .liquidGlassSurface(cornerRadius: 22)
-
-            HStack(spacing: 12) {
-                Button {
-                    coordinator.refreshPermissionStatuses()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .liquidGlassSurface(cornerRadius: 14, interactive: true)
-
-                // Screen Recording / System Audio TCC grants from System Settings only
-                // apply to a new process — always offer relaunch while screen capture is missing.
-                if coordinator.permissionChecklist.contains(where: {
-                    $0.requirement == .screenRecording && !$0.state.isApproved
-                }) {
-                    Button {
-                        coordinator.relaunchForUpdatedPermissions()
-                    } label: {
-                        Label("Relaunch Glimpse", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .keyboardShortcut("r", modifiers: [.command])
-                    .liquidGlassSurface(cornerRadius: 14, interactive: true)
-                }
-
-                Spacer()
-
-                Label(
-                    "\(coordinator.approvedRequiredPermissionCount) of \(coordinator.requiredPermissionCount) detected",
-                    systemImage: "checkmark.circle"
-                )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            }
+            .scrollIndicators(.automatic)
         }
-        .padding(34)
-        .frame(maxWidth: 820, maxHeight: .infinity, alignment: .center)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(LiquidGlassBackdrop())
         .onAppear {
             coordinator.startPermissionMonitoring()
         }
         .onDisappear {
             coordinator.stopPermissionMonitoring()
         }
+    }
+
+    private var permissionFooter: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                permissionActions
+                Spacer()
+                permissionProgress
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                permissionActions
+                permissionProgress
+            }
+        }
+    }
+
+    private var permissionActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                coordinator.refreshPermissionStatuses()
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .liquidGlassSurface(cornerRadius: 14, interactive: true)
+
+            // Screen Recording / System Audio TCC grants from System Settings only
+            // apply to a new process — always offer relaunch while screen capture is missing.
+            if coordinator.permissionChecklist.contains(where: {
+                $0.requirement == .screenRecording && !$0.state.isApproved
+            }) {
+                Button {
+                    coordinator.relaunchForUpdatedPermissions()
+                } label: {
+                    Label("Relaunch Glimpse", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+                .liquidGlassSurface(cornerRadius: 14, interactive: true)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var permissionProgress: some View {
+        Label(
+            "\(coordinator.approvedRequiredPermissionCount) of \(coordinator.requiredPermissionCount) detected",
+            systemImage: "checkmark.circle"
+        )
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -4060,51 +4135,92 @@ private struct PermissionChecklistRow: View {
     let action: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: item.requirement.systemImage)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(statusColor)
-                .frame(width: 34, height: 34)
-                .background(statusColor.opacity(0.12), in: Circle())
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                rowIcon
+                rowCopy
+                    .layoutPriority(1)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(item.requirement.title)
-                        .font(.headline)
-                    if !item.isRequired {
-                        Text("Optional")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Spacer(minLength: 18)
 
-                Text(item.requirement.summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(item.detail)
-                    .font(.caption)
-                    .foregroundStyle(statusColor)
-                    .fixedSize(horizontal: false, vertical: true)
+                statusLabel
+                    .frame(minWidth: 118, alignment: .leading)
+                actionButton
             }
 
-            Spacer(minLength: 18)
+            HStack(alignment: .top, spacing: 14) {
+                rowIcon
 
-            Label(item.state.label, systemImage: statusImage)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(statusColor)
-                .frame(width: 128, alignment: .leading)
+                VStack(alignment: .leading, spacing: 12) {
+                    rowCopy
 
-            if let actionTitle = item.actionTitle {
-                Button(action: action) {
-                    Label(actionTitle, systemImage: actionImage)
-                        .frame(width: 122)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            statusLabel
+                            Spacer(minLength: 0)
+                            actionButton
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            statusLabel
+                            actionButton
+                        }
+                    }
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+    }
+
+    private var rowIcon: some View {
+        Image(systemName: item.requirement.systemImage)
+            .font(.system(size: 20, weight: .medium))
+            .foregroundStyle(statusColor)
+            .frame(width: 34, height: 34)
+            .background(statusColor.opacity(0.12), in: Circle())
+    }
+
+    private var rowCopy: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(item.requirement.title)
+                    .font(.headline)
+                if !item.isRequired {
+                    Text("Optional")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(item.requirement.summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(item.detail)
+                .font(.caption)
+                .foregroundStyle(statusColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var statusLabel: some View {
+        Label(item.state.label, systemImage: statusImage)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(statusColor)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if let actionTitle = item.actionTitle {
+            Button(action: action) {
+                Label(actionTitle, systemImage: actionImage)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(minWidth: 122)
+        }
     }
 
     private var statusImage: String {
