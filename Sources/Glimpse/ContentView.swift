@@ -3260,8 +3260,8 @@ private struct CompactIdleView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         readyHeader
-                        readyVisualSources
-                        readyAudioSources
+                        readyCameraAndAudioSources
+                        readyScreenSource
                         recordingOptions
                     }
                     .padding(22)
@@ -3330,34 +3330,29 @@ private struct CompactIdleView: View {
         }
     }
 
-    private var readyVisualSources: some View {
-        // Flexible columns so camera + screen stay inside the surface without
-        // rigid min-widths forcing horizontal overflow into each other.
+    private var readyCameraAndAudioSources: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 16) {
                 ReadyCameraColumn()
                     .environmentObject(coordinator)
-                    .frame(maxWidth: .infinity)
-                    .layoutPriority(0)
-                ReadyScreenColumn()
-                    .environmentObject(coordinator)
-                    .frame(maxWidth: .infinity)
+                    .frame(minWidth: 430, idealWidth: 520, maxWidth: 560)
                     .layoutPriority(1)
+
+                readyAudioRail
+                    .frame(minWidth: 390, maxWidth: .infinity)
             }
 
             VStack(alignment: .leading, spacing: 16) {
                 ReadyCameraColumn()
                     .environmentObject(coordinator)
                     .frame(maxWidth: .infinity)
-                ReadyScreenColumn()
-                    .environmentObject(coordinator)
-                    .frame(maxWidth: .infinity)
+                readyAudioRail
             }
         }
     }
 
-    private var readyAudioSources: some View {
-        HStack(alignment: .top, spacing: 14) {
+    private var readyAudioRail: some View {
+        VStack(alignment: .leading, spacing: 14) {
             ReadyMicrophoneColumn()
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
@@ -3365,6 +3360,12 @@ private struct CompactIdleView: View {
                 .environmentObject(coordinator)
                 .frame(maxWidth: .infinity)
         }
+    }
+
+    private var readyScreenSource: some View {
+        ReadyScreenColumn()
+            .environmentObject(coordinator)
+            .frame(maxWidth: .infinity)
     }
 
     private var recordingOptions: some View {
@@ -3803,7 +3804,7 @@ private struct ReadyAudioSourceCard<Content: View>: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 232, alignment: .topLeading)
         .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
