@@ -72,7 +72,7 @@ scripts/create_dmg.sh
 
 ## GitHub Releases
 
-`.github/workflows/release-macos.yml` builds, signs, notarizes, staples, uploads the DMG artifact, and attaches it to a GitHub Release when a `v*` tag is pushed.
+`.github/workflows/release-macos.yml` builds, signs, uploads the DMG artifact, publishes the signed Sparkle appcast, and attaches the DMG to a GitHub Release when a `v*` tag is pushed. When Developer ID and notarization credentials are configured, the workflow also notarizes and staples the release. Otherwise it publishes an ad-hoc signed, unnotarized update.
 
 Cut the initial release from `main` with:
 
@@ -81,7 +81,11 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Optional secrets for signed and notarized tag releases:
+Required for automatic updates:
+
+- `SPARKLE_ED_PRIVATE_KEY`
+
+Optional secrets for Developer ID signed and notarized releases:
 
 - `DEVELOPER_ID_APPLICATION_P12_BASE64`
 - `DEVELOPER_ID_APPLICATION_P12_PASSWORD`
@@ -89,13 +93,12 @@ Optional secrets for signed and notarized tag releases:
 - `APPLE_ID`
 - `APPLE_TEAM_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`
-- `SPARKLE_ED_PRIVATE_KEY`
 
 Optional:
 
 - `KEYCHAIN_PASSWORD`
 
-`SPARKLE_ED_PRIVATE_KEY` and the Developer ID signing credentials are mandatory for update releases. A release may not fall back to an ad-hoc identity because a stable Developer ID designated requirement is what lets macOS preserve the user's privacy grants across app versions.
+`SPARKLE_ED_PRIVATE_KEY` authenticates the update archive and signed feed and is mandatory for update releases. If Developer ID credentials are unavailable, the app and its bundled helpers receive valid ad-hoc signatures so Sparkle can install the update. Because ad-hoc signatures do not provide a stable identity across versions, macOS may ask users to grant Screen Recording, Camera, and Microphone permissions again after an update. The initial download also remains subject to Gatekeeper's unnotarized-app warning.
 
 ## Updates
 
@@ -107,7 +110,7 @@ https://raw.githubusercontent.com/rtemoni/Glimpse/main/updates/appcast.xml
 
 The app checks automatically once per day and also exposes **Check for Updates...** in the app menu and Settings. Download progress is shown from 0–99%; after verification and extraction, the action becomes **Update** and offers **Update Now** or **Next Launch**. Sparkle verifies the signed feed, Ed25519 archive signature, and Apple code signature, then atomically replaces the current app. Recorder and export settings live outside the app bundle with a rolling valid backup and a pre-update snapshot. The legacy `updates/latest.json` manifest is still published for builds that predate the in-app updater.
 
-The first release containing Sparkle must still be installed from its DMG once. After that migration release, subsequent signed releases update in place without reinstalling a DMG.
+The first release containing Sparkle must still be installed from its DMG once. After that migration release, subsequent Ed25519-signed releases update in place without reinstalling a DMG. Developer ID releases preserve a stable macOS identity; ad-hoc releases may require privacy permissions to be granted again.
 
 ## Privacy
 

@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build-dmg:
-    name: Build signed DMG
+    name: Build update DMG
     runs-on: macos-latest
 
     env:
@@ -24,7 +24,6 @@ jobs:
       PRODUCT_NAME: Glimpse
       BUNDLE_IDENTIFIER: com.rtemoni.Glimpse
       EXPECTED_UPDATE_BUNDLE_IDENTIFIER: com.rtemoni.Glimpse
-      REQUIRE_DEVELOPER_ID: "1"
       RELEASE_BRANCH: main
       SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -93,7 +92,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
           RESET_SCREEN_CAPTURE_TCC: "0"
-        run: scripts/build_app.sh
+        run: |
+          if [[ -n "$SIGNING_IDENTITY" && -n "$APPLE_TEAM_ID" ]]; then
+            export REQUIRE_DEVELOPER_ID=1
+            echo "Building with the configured Developer ID identity."
+          else
+            export REQUIRE_DEVELOPER_ID=0
+            echo "::warning::Building an ad-hoc signed update. macOS may ask users to grant privacy permissions again after installation."
+          fi
+
+          scripts/build_app.sh
 
       - name: Smoke test packaged app
         run: scripts/smoke_test_app.sh ".build/distribution/Glimpse.app"
@@ -160,7 +168,12 @@ jobs:
 
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --generate-notes
-          gh release upload "$tag" "$dmg_path" --clobber
+
+          release_asset="$dmg_path"
+          if [[ -z "$SIGNING_IDENTITY" || -z "$APPLE_ID" || -z "$APPLE_TEAM_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+            release_asset="$dmg_path#Unnotarized macOS DMG"
+          fi
+          gh release upload "$tag" "$release_asset" --clobber
 
       - name: Publish update manifest
         if: startsWith(github.ref, 'refs/tags/')
