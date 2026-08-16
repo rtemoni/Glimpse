@@ -1,6 +1,12 @@
 # Glimpse
 
+![Glimpse welcome screen](docs/images/glimpse-cover.png)
+
 Glimpse is a SwiftPM-based macOS recording app that captures the screen, webcam, microphone, and optional system audio, then writes a single recording with the camera composited as a bottom-left picture-in-picture overlay.
+
+## Editing
+
+![Glimpse clip editor](docs/images/glimpse-editing.png)
 
 ## Requirements
 
