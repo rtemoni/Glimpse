@@ -6,7 +6,6 @@ import AppKit
 struct GlimpseApp: App {
     @NSApplicationDelegateAdaptor(GlimpseAppDelegate.self) private var appDelegate
     @StateObject private var coordinator = RecordingCoordinator()
-    @StateObject private var statusItemController = RecordingStatusItemController()
     @StateObject private var updateController = AppUpdateController()
 
     init() {
@@ -26,7 +25,7 @@ struct GlimpseApp: App {
                 .environmentObject(coordinator)
                 .environmentObject(updateController)
                 .onAppear {
-                    statusItemController.attach(to: coordinator)
+                    appDelegate.attach(to: coordinator)
                 }
                 .frame(minWidth: 380, minHeight: 220)
         }

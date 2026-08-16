@@ -83,17 +83,48 @@ struct RecordingWindowLifecycleController: NSViewRepresentable {
 
 @MainActor
 final class GlimpseAppDelegate: NSObject, NSApplicationDelegate {
+    private weak var coordinator: RecordingCoordinator?
+    private let recordingStatusItemController = RecordingStatusItemController()
+
+    func attach(to coordinator: RecordingCoordinator) {
+        guard self.coordinator !== coordinator else {
+            return
+        }
+
+        self.coordinator = coordinator
+        recordingStatusItemController.attach(to: coordinator)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        stopRecordingIfForegrounded()
+    }
+
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
         if GlimpseMainWindowRegistry.shared.isHiddenForRecording {
+            stopRecordingIfForegrounded()
             return false
         }
         if !flag {
             GlimpseWindowPresenter.showMainWindow()
         }
         return true
+    }
+
+    private func stopRecordingIfForegrounded() {
+        guard let coordinator,
+              RecordingAppActivationPolicy.shouldStopRecording(
+                state: coordinator.state,
+                isWindowHiddenForRecording: GlimpseMainWindowRegistry.shared.isHiddenForRecording
+              ) else {
+            return
+        }
+
+        Task { @MainActor [weak coordinator] in
+            await coordinator?.stopRecording()
+        }
     }
 }
 #endif
