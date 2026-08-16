@@ -2,6 +2,30 @@ import XCTest
 @testable import GlimpseCore
 
 final class PreviewPerformanceTests: XCTestCase {
+    func testPreviewProfileDownscalesFiveKDisplay() {
+        let outputSize = PreviewCaptureProfile.screenOutputSize(
+            for: PixelSize(width: 5_120, height: 2_880)
+        )
+
+        XCTAssertEqual(outputSize, PixelSize(width: 960, height: 540))
+    }
+
+    func testPreviewProfilePreservesPortraitAspectRatioWithinBounds() {
+        let outputSize = PreviewCaptureProfile.screenOutputSize(
+            for: PixelSize(width: 2_160, height: 3_840)
+        )
+
+        XCTAssertEqual(outputSize, PixelSize(width: 304, height: 540))
+    }
+
+    func testPreviewProfileDoesNotUpscaleSmallWindow() {
+        let outputSize = PreviewCaptureProfile.screenOutputSize(
+            for: PixelSize(width: 640, height: 480)
+        )
+
+        XCTAssertEqual(outputSize, PixelSize(width: 640, height: 480))
+    }
+
     func testLimiterEmitsAtConfiguredCadence() {
         var limiter = PreviewUpdateLimiter(maximumUpdatesPerSecond: 30)
 

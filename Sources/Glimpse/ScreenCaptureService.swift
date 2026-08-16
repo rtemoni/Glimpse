@@ -12,6 +12,11 @@ struct CapturedVideoFrame: @unchecked Sendable {
     let timestamp: CMTime
 }
 
+enum CaptureSessionPurpose {
+    case setupPreview
+    case recording
+}
+
 enum ScreenCaptureTarget: Identifiable {
     case display(SCDisplay)
     case window(SCWindow)
@@ -147,7 +152,7 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
         return displays + windows
     }
 
-    func prepare(target: ScreenCaptureTarget?) async throws -> CGSize {
+    func prepare(target: ScreenCaptureTarget?, purpose: CaptureSessionPurpose) async throws -> CGSize {
         let resolvedTarget: ScreenCaptureTarget
         if let target {
             resolvedTarget = target
@@ -173,8 +178,6 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
                 excludingApplications: [],
                 exceptingWindows: []
             )
-            configuration.width = display.width
-            configuration.height = display.height
         case .window(let window):
             let scale = NSScreen.screens
                 .first { screen in
@@ -185,12 +188,32 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
             let height = max(1, Int((window.frame.height * scale).rounded()))
             preparedSize = CGSize(width: CGFloat(width), height: CGFloat(height))
             filter = SCContentFilter(desktopIndependentWindow: window)
-            configuration.width = width
-            configuration.height = height
         }
 
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        configuration.queueDepth = 5
+        let outputSize: PixelSize
+        switch purpose {
+        case .setupPreview:
+            outputSize = PreviewCaptureProfile.screenOutputSize(
+                for: PixelSize(
+                    width: Double(preparedSize.width),
+                    height: Double(preparedSize.height)
+                )
+            )
+            configuration.minimumFrameInterval = CMTime(
+                value: 1,
+                timescale: CMTimeScale(PreviewCaptureProfile.maximumFramesPerSecond)
+            )
+            configuration.queueDepth = PreviewCaptureProfile.screenQueueDepth
+        case .recording:
+            outputSize = PixelSize(
+                width: Double(preparedSize.width),
+                height: Double(preparedSize.height)
+            )
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+            configuration.queueDepth = 5
+        }
+        configuration.width = max(1, Int(outputSize.width))
+        configuration.height = max(1, Int(outputSize.height))
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.showsCursor = true
         configuration.capturesAudio = false
