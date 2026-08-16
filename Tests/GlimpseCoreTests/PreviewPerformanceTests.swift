@@ -2,6 +2,12 @@ import XCTest
 @testable import GlimpseCore
 
 final class PreviewPerformanceTests: XCTestCase {
+    func testSetupPreviewKeepsScreenLightweightAndCameraSmooth() {
+        XCTAssertEqual(PreviewCaptureProfile.maximumScreenFramesPerSecond, 1)
+        XCTAssertEqual(PreviewCaptureProfile.maximumCameraFramesPerSecond, 30)
+        XCTAssertEqual(PreviewCaptureProfile.screenQueueDepth, 3)
+    }
+
     func testPreviewProfileDownscalesFiveKDisplay() {
         let outputSize = PreviewCaptureProfile.screenOutputSize(
             for: PixelSize(width: 5_120, height: 2_880)

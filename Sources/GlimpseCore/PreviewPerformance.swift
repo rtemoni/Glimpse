@@ -3,7 +3,8 @@ import Foundation
 /// Keeps setup previews inexpensive while retaining enough detail and motion for source checks.
 public enum PreviewCaptureProfile {
     public static let maximumScreenSize = PixelSize(width: 960, height: 540)
-    public static let maximumFramesPerSecond = 15.0
+    public static let maximumScreenFramesPerSecond = 1.0
+    public static let maximumCameraFramesPerSecond = 30.0
     public static let screenQueueDepth = 3
 
     public static func screenOutputSize(

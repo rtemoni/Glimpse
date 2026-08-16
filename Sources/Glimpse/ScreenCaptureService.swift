@@ -201,7 +201,7 @@ final class ScreenCaptureService: NSObject, SCStreamOutput, SCStreamDelegate {
             )
             configuration.minimumFrameInterval = CMTime(
                 value: 1,
-                timescale: CMTimeScale(PreviewCaptureProfile.maximumFramesPerSecond)
+                timescale: CMTimeScale(PreviewCaptureProfile.maximumScreenFramesPerSecond)
             )
             configuration.queueDepth = PreviewCaptureProfile.screenQueueDepth
         case .recording:

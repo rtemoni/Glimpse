@@ -47,10 +47,10 @@ final class CaptureMediaPipeline: @unchecked Sendable {
     private var acceptsVideoFrames = false
     private var acceptsAudioSamples = false
     private var screenPreviewLimiter = PreviewUpdateLimiter(
-        maximumUpdatesPerSecond: PreviewCaptureProfile.maximumFramesPerSecond
+        maximumUpdatesPerSecond: PreviewCaptureProfile.maximumScreenFramesPerSecond
     )
     private var cameraPreviewLimiter = PreviewUpdateLimiter(
-        maximumUpdatesPerSecond: PreviewCaptureProfile.maximumFramesPerSecond
+        maximumUpdatesPerSecond: PreviewCaptureProfile.maximumCameraFramesPerSecond
     )
     private var screenRateTracker = PreviewUpdateRateTracker()
     private var cameraRateTracker = PreviewUpdateRateTracker()

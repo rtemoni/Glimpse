@@ -37,7 +37,7 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         switch purpose {
         case .setupPreview:
             session.sessionPreset = .medium
-            frameRate = PreviewCaptureProfile.maximumFramesPerSecond
+            frameRate = PreviewCaptureProfile.maximumCameraFramesPerSecond
         case .recording:
             session.sessionPreset = .high
             frameRate = 30
