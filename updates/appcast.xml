@@ -7,17 +7,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <description>Signed Glimpse releases published from GitHub.</description>
     <language>en</language>
     <item>
-      <title>Glimpse 0.1.9</title>
-      <link>https://github.com/rtemoni/Glimpse/releases/tag/v0.1.9</link>
-      <sparkle:version>14</sparkle:version>
-      <sparkle:shortVersionString>0.1.9</sparkle:shortVersionString>
+      <title>Glimpse 0.1.10</title>
+      <link>https://github.com/rtemoni/Glimpse/releases/tag/v0.1.10</link>
+      <sparkle:version>15</sparkle:version>
+      <sparkle:shortVersionString>0.1.10</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/rtemoni/Glimpse/releases/tag/v0.1.9</sparkle:releaseNotesLink>
-      <pubDate>Sun, 16 Aug 2026 11:17:14 +0000</pubDate>
-      <enclosure url="https://github.com/rtemoni/Glimpse/releases/download/v0.1.9/Glimpse-0.1.9.dmg" sparkle:edSignature="7ByGQq44RJGXtzI9RpTMCTSeCtKqzQk7U0wJE4AZQZzZr/8pKVZlVd7GlTpiW4SrZrOShBJUdaoXRd5AIPUqBg==" length="8975438" type="application/octet-stream"></enclosure>
+      <sparkle:releaseNotesLink>https://github.com/rtemoni/Glimpse/releases/tag/v0.1.10</sparkle:releaseNotesLink>
+      <pubDate>Sun, 16 Aug 2026 11:35:12 +0000</pubDate>
+      <enclosure url="https://github.com/rtemoni/Glimpse/releases/download/v0.1.10/Glimpse-0.1.10.dmg" sparkle:edSignature="fak4NTvVEiuIAosmu8IvHZOcLJ3RAkpq/SwKft3sVOHuYCzcLygSULfqKWYbMUCzIN+WuL1CYuiNwNhiKt8+BA==" length="8976195" type="application/octet-stream"></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: WOJyZukxTpGcRvyHJPUibDJr4NPHBxcxQ0RFyn+dH/N6dqGkWqWQpn1wnfnSyYHKL7c6XhGkJY3oXqnelMcIAw==
-length: 1376
+edSignature: O9aovS1dT6H2XlUOTM+p1NeMe/eK4YKRxSoK6efMmCw6B0TKAUYXxnohzlGkjpOdBKhZfiAu/m6DD0NGpcFRCA==
+length: 1382
 -->
