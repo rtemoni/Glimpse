@@ -352,7 +352,10 @@ final class RecordingCoordinator: ObservableObject {
                 return
             }
 
-            _ = try await screenCapture.prepare(target: selectedCaptureTarget)
+            _ = try await screenCapture.prepare(
+                target: selectedCaptureTarget,
+                purpose: .setupPreview
+            )
             try Task.checkCancellation()
             guard setupPreviewStartID == startID, state == .idle else {
                 await screenCapture.stop()
@@ -368,7 +371,10 @@ final class RecordingCoordinator: ObservableObject {
                         return
                     }
                     do {
-                        try cameraCapture.prepare(deviceID: settings.selectedCameraID)
+                        try cameraCapture.prepare(
+                            deviceID: settings.selectedCameraID,
+                            purpose: .setupPreview
+                        )
                         includeCamera = true
                     } catch {
                         previewStatus = "Previewing screen only; camera unavailable"
@@ -568,9 +574,9 @@ final class RecordingCoordinator: ObservableObject {
 
             settings.fileFormat = .mov
             let outputURL = try makeOutputURL()
-            let captureSize = try await screenCapture.prepare(target: target)
+            let captureSize = try await screenCapture.prepare(target: target, purpose: .recording)
             if includeCamera {
-                try cameraCapture.prepare(deviceID: settings.selectedCameraID)
+                try cameraCapture.prepare(deviceID: settings.selectedCameraID, purpose: .recording)
             }
             try await audioCapture.prepare(
                 microphoneDeviceID: settings.selectedMicrophoneID,

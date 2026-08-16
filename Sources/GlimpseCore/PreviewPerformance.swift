@@ -1,5 +1,37 @@
 import Foundation
 
+/// Keeps setup previews inexpensive while retaining enough detail and motion for source checks.
+public enum PreviewCaptureProfile {
+    public static let maximumScreenSize = PixelSize(width: 960, height: 540)
+    public static let maximumScreenFramesPerSecond = 1.0
+    public static let maximumCameraFramesPerSecond = 30.0
+    public static let screenQueueDepth = 3
+
+    public static func screenOutputSize(
+        for sourceSize: PixelSize,
+        fitting maximumSize: PixelSize = maximumScreenSize
+    ) -> PixelSize {
+        guard sourceSize.width > 0,
+              sourceSize.height > 0,
+              maximumSize.width > 0,
+              maximumSize.height > 0 else {
+            return PixelSize(width: 1, height: 1)
+        }
+
+        let scale = min(
+            1,
+            min(
+                maximumSize.width / sourceSize.width,
+                maximumSize.height / sourceSize.height
+            )
+        )
+        return PixelSize(
+            width: max(1, (sourceSize.width * scale).rounded()),
+            height: max(1, (sourceSize.height * scale).rounded())
+        )
+    }
+}
+
 /// Limits UI-bound preview work to a predictable cadence without accumulating drift.
 public struct PreviewUpdateLimiter: Sendable {
     public let maximumUpdatesPerSecond: Double

@@ -27,13 +27,21 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         .map { SourceDevice(id: $0.uniqueID, name: $0.localizedName) }
     }
 
-    func prepare(deviceID: String?) throws {
+    func prepare(deviceID: String?, purpose: CaptureSessionPurpose) throws {
         session.beginConfiguration()
         defer {
             session.commitConfiguration()
         }
 
-        session.sessionPreset = .high
+        let frameRate: Double
+        switch purpose {
+        case .setupPreview:
+            session.sessionPreset = .medium
+            frameRate = PreviewCaptureProfile.maximumCameraFramesPerSecond
+        case .recording:
+            session.sessionPreset = .high
+            frameRate = 30
+        }
         session.inputs.forEach { session.removeInput($0) }
         session.outputs.forEach { session.removeOutput($0) }
 
@@ -41,7 +49,7 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
             throw RecorderRuntimeError.captureUnavailable("No camera is available.")
         }
 
-        try configureFrameRate(for: device)
+        try configureFrameRate(for: device, targetFrameRate: frameRate)
 
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else {
@@ -109,8 +117,7 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         return AVCaptureDevice.default(for: .video)
     }
 
-    private func configureFrameRate(for device: AVCaptureDevice) throws {
-        let targetFrameRate = 30.0
+    private func configureFrameRate(for device: AVCaptureDevice, targetFrameRate: Double) throws {
         guard device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
             $0.minFrameRate <= targetFrameRate && $0.maxFrameRate >= targetFrameRate
         }) else {
