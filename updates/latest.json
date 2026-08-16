@@ -1,12 +1,12 @@
 {
-  "version": "0.1.8",
-  "build": "13",
-  "tag": "v0.1.8",
-  "releaseDate": "2026-08-15",
+  "version": "0.1.9",
+  "build": "14",
+  "tag": "v0.1.9",
+  "releaseDate": "2026-08-16",
   "minimumSystemVersion": "13.0",
-  "downloadURL": "https://github.com/rtemoni/Glimpse/releases/download/v0.1.8/Glimpse-0.1.8.dmg",
-  "releaseNotesURL": "https://github.com/rtemoni/Glimpse/releases/tag/v0.1.8",
-  "edSignature": "FBNOGBoPguSvNwrYYBn4+YzhvYjKnSsi4wws/bDiDi2RPJYOXrWdv0vFSnUtdIyAr20ojhLEhFQFeRgW9QMnDQ==",
-  "length": 8974102,
+  "downloadURL": "https://github.com/rtemoni/Glimpse/releases/download/v0.1.9/Glimpse-0.1.9.dmg",
+  "releaseNotesURL": "https://github.com/rtemoni/Glimpse/releases/tag/v0.1.9",
+  "edSignature": "7ByGQq44RJGXtzI9RpTMCTSeCtKqzQk7U0wJE4AZQZzZr/8pKVZlVd7GlTpiW4SrZrOShBJUdaoXRd5AIPUqBg==",
+  "length": 8975438,
   "branch": "main"
 }
