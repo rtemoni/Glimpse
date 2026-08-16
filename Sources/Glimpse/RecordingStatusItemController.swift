@@ -20,16 +20,15 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         self.coordinator = coordinator
         cancellables.removeAll()
 
-        coordinator.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.refresh()
-                }
+        coordinator.$state
+            .combineLatest(coordinator.$elapsedSeconds)
+            .sink { [weak self] state, elapsedSeconds in
+                self?.refresh(state: state, elapsedSeconds: elapsedSeconds)
             }
             .store(in: &cancellables)
 
-        refresh()
+        ensureStatusItem().isVisible = false
+        refresh(state: coordinator.state, elapsedSeconds: coordinator.elapsedSeconds)
     }
 
     deinit {
@@ -39,31 +38,32 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         }
     }
 
-    private func refresh() {
-        guard let coordinator, coordinator.shouldShowRecordingStatusItem else {
-            removeStatusItem()
+    private func refresh(state: RecordingState, elapsedSeconds: Int) {
+        guard shouldShowStatusItem(for: state) else {
+            hideStatusItem()
             return
         }
 
         let statusItem = ensureStatusItem()
-        updatePulse(for: coordinator.state)
+        statusItem.isVisible = true
+        updatePulse(for: state)
         if let button = statusItem.button {
-            button.image = statusImage(for: coordinator)
+            button.image = statusImage(for: state, elapsedSeconds: elapsedSeconds)
             button.imagePosition = .imageLeading
-            button.contentTintColor = statusTintColor(for: coordinator)
-            button.alphaValue = coordinator.state == .recording && !isPulseBright ? 0.45 : 1
+            button.contentTintColor = statusTintColor(for: state)
+            button.alphaValue = state == .recording && !isPulseBright ? 0.45 : 1
             button.attributedTitle = NSAttributedString(
-                string: coordinator.menuBarElapsedTimeLabel,
+                string: elapsedTimeLabel(elapsedSeconds),
                 attributes: [
-                    .foregroundColor: statusTintColor(for: coordinator),
+                    .foregroundColor: statusTintColor(for: state),
                     .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
                 ]
             )
             button.target = self
             button.action = #selector(stopRecording)
             button.sendAction(on: [.leftMouseUp])
-            button.toolTip = "\(statusTitle(for: coordinator)) — click to stop"
-            button.setAccessibilityLabel(statusTitle(for: coordinator))
+            button.toolTip = "\(statusTitle(for: state, elapsedSeconds: elapsedSeconds)) — click to stop"
+            button.setAccessibilityLabel(statusTitle(for: state, elapsedSeconds: elapsedSeconds))
             button.setAccessibilityHelp("Stops the recording and returns to the Glimpse editor")
         }
         statusItem.menu = nil
@@ -79,39 +79,49 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
         return item
     }
 
-    private func removeStatusItem() {
+    private func hideStatusItem() {
         stopPulse()
-        guard let statusItem else {
-            return
-        }
-
-        NSStatusBar.system.removeStatusItem(statusItem)
-        self.statusItem = nil
+        statusItem?.isVisible = false
     }
 
-    private func statusTitle(for coordinator: RecordingCoordinator) -> String {
-        switch coordinator.state {
+    private func shouldShowStatusItem(for state: RecordingState) -> Bool {
+        state == .recording || state == .paused || state == .stopping
+    }
+
+    private func statusTitle(for state: RecordingState, elapsedSeconds: Int) -> String {
+        switch state {
         case .paused:
-            return "Paused \(coordinator.elapsedTimeLabel)"
+            return "Paused \(detailedElapsedTimeLabel(elapsedSeconds))"
         case .stopping:
             return "Stopping"
         default:
-            return "Recording \(coordinator.elapsedTimeLabel)"
+            return "Recording \(detailedElapsedTimeLabel(elapsedSeconds))"
         }
     }
 
-    private func statusImage(for coordinator: RecordingCoordinator) -> NSImage? {
+    private func statusImage(for state: RecordingState, elapsedSeconds: Int) -> NSImage? {
         let image = NSImage(
-            systemSymbolName: coordinator.recordingStatusSystemImage,
-            accessibilityDescription: statusTitle(for: coordinator)
+            systemSymbolName: statusSystemImage(for: state),
+            accessibilityDescription: statusTitle(for: state, elapsedSeconds: elapsedSeconds)
         )?
         .withSymbolConfiguration(.init(pointSize: 14, weight: .semibold))
         image?.isTemplate = true
         return image
     }
 
-    private func statusTintColor(for coordinator: RecordingCoordinator) -> NSColor {
-        switch coordinator.state {
+    private func statusSystemImage(for state: RecordingState) -> String {
+        switch state {
+        case .paused:
+            return "pause.circle.fill"
+        case .stopping:
+            return "stop.circle.fill"
+        default:
+            return "record.circle.fill"
+        }
+    }
+
+    private func statusTintColor(for state: RecordingState) -> NSColor {
+        switch state {
         case .paused:
             return .systemOrange
         case .stopping:
@@ -137,7 +147,9 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
                     return
                 }
                 self.isPulseBright.toggle()
-                self.refresh()
+                if let coordinator = self.coordinator {
+                    self.refresh(state: coordinator.state, elapsedSeconds: coordinator.elapsedSeconds)
+                }
             }
         }
         timer.tolerance = 0.1
@@ -160,28 +172,18 @@ final class RecordingStatusItemController: NSObject, ObservableObject {
             await coordinator?.stopRecording()
         }
     }
-}
 
-private extension RecordingCoordinator {
-    var shouldShowRecordingStatusItem: Bool {
-        state == .recording || state == .paused || state == .stopping
-    }
-
-    var recordingStatusSystemImage: String {
-        switch state {
-        case .paused:
-            return "pause.circle.fill"
-        case .stopping:
-            return "stop.circle.fill"
-        default:
-            return "record.circle.fill"
-        }
-    }
-
-    var menuBarElapsedTimeLabel: String {
+    private func elapsedTimeLabel(_ elapsedSeconds: Int) -> String {
         let minutes = elapsedSeconds / 60
         let seconds = elapsedSeconds % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    private func detailedElapsedTimeLabel(_ elapsedSeconds: Int) -> String {
+        let hours = elapsedSeconds / 3600
+        let minutes = (elapsedSeconds % 3600) / 60
+        let seconds = elapsedSeconds % 60
+        return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }
 #endif
